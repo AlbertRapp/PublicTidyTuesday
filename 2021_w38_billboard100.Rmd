@@ -1,0 +1,228 @@
+---
+title: "2020_w38_billboard100"
+author: "Albert Rapp"
+date: "14 9 2021"
+output: html_document
+---
+
+Read data and load libraries
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(patchwork)
+library(gridExtra)
+billboard <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-09-14/billboard.csv')
+```
+
+Get rid of URL and convert dates
+
+```{r}
+billboard <- billboard %>% 
+  select(-url) %>% 
+  mutate(week_id = mdy(week_id)) %>% 
+  mutate(year = year(week_id)) %>% 
+  mutate(week = week(week_id))
+```
+
+Find out who appears most often.
+
+```{r}
+best_table <- billboard %>% 
+  filter(year >= 2000, week_position < 50) %>% 
+  count(performer, sort = T) %>% 
+  slice(1:10) %>% 
+  rename_with(~c("Artist", "#Appearances"))
+best_table
+```
+
+
+```{r}
+plot_artist <- function(data, artist_name, low, mid, high) {
+  artist <- data %>% 
+    filter(str_detect(performer, artist_name))
+  
+  artist_years <- artist %>% 
+    pull(week_id) %>% 
+    range() %>% 
+    year()
+  
+  top_artist <- artist %>% 
+    group_by(week, year) %>% 
+    summarise(best_position = min(week_position), .groups = "drop") 
+  
+  top_artist <- 
+    expand_grid(week = 1:52, year = min(artist_years):max(artist_years)) %>% 
+    left_join(top_artist, by = c("week", "year")) %>% 
+    mutate(best_position = if_else(is.na(best_position), 0, best_position))
+  
+  p <- top_artist %>% 
+    ggplot(aes(x = week, y = year, fill = best_position)) +
+    geom_tile(col = "black") +
+    coord_equal(expand = F) +
+    scale_x_continuous(
+      breaks = seq(5, 52, 5)
+    ) +
+    scale_y_continuous(
+      breaks = seq(min(artist_years), max(artist_years), 2)
+    ) +
+    scale_fill_gradient2(
+      limits = c(1, 50),
+      high = high,
+      mid = mid,
+      low = low,
+      midpoint = 25,
+    ) +
+    labs(
+      x = element_blank(),
+      y = element_blank(),
+      fill = "Position of Highest Ranking Song",
+      title = artist_name
+    ) +
+    theme(
+      legend.position = "bottom",
+      axis.ticks = element_blank(),
+      plot.title.position = "plot",
+      axis.text = element_text(size = 8, face = "bold", colour = "grey30"),
+      legend.text = element_text(size = 10, face = "bold", colour = "grey30"),
+      plot.background = element_rect(fill = "grey80"),
+      legend.background = element_rect(fill = "grey80"),
+      title = element_text(size = 16, face = "italic", colour = "grey30"),
+    ) +
+    guides(
+      fill = guide_colorsteps(
+        title.position = "top",
+        barwidth = unit(20, "lines"), 
+        barheight = unit(.5, "lines")
+      ),
+    ) 
+  p
+}
+```
+
+
+
+```{r}
+p_taylor <- plot_artist(
+  data = billboard, 
+  artist = "Taylor Swift", 
+  low = "#f3bf73", 
+  mid = "#4b2671", 
+  high = "#b8396b"
+)
+p_taylor
+```
+
+
+```{r}
+p_drake <- plot_artist(
+  data = billboard %>% filter(year >= 1990), 
+  artist = "Drake", 
+  low = "#f3bf73", 
+  mid = "#4b2671", 
+  high = "#b8396b"
+)
+p_drake
+```
+
+
+```{r}
+p_pink <- plot_artist(
+  data = billboard %>% filter(year >= 1990), 
+  artist = "P!nk", 
+  low = "#f3bf73", 
+  mid = "#4b2671", 
+  high = "#b8396b"
+)
+p_pink
+```
+
+
+Use `cumsum()` to count song appearances over time and create plot accordingly.
+
+```{r}
+artists <- c("Taylor Swift", "Drake", "P!nk")
+p_evolution <- billboard %>% 
+  filter(year >= 2000, week_position < 50) %>% 
+  filter(performer %in% artists) %>% 
+  group_by(week_id, performer) %>% 
+  count() %>% 
+  group_by(performer) %>% 
+  mutate(cumulated = cumsum(n)) %>% 
+  mutate(performer = factor(performer, levels = artists)) %>% 
+  ggplot(aes(week_id, cumulated, col = performer)) +
+  geom_step(size = 2) +
+  scale_color_manual(values = c("#f3bf73", "#4b2671", "#b8396b")) +
+  theme_minimal() +
+    labs(
+      x = "Year",
+      y = "#Appearances",
+      title = "Song Appearances in the Billboard Top 50",
+      subtitle = "(Since 2000)",
+      col = element_blank()
+    ) +
+    theme(
+      legend.title = NULL,
+      legend.position = "right",
+      axis.ticks = element_blank(),
+      plot.title.position = "plot",
+      axis.text = element_text(size = 10, face = "bold", colour = "grey30"),
+      legend.text = element_text(size = 10, face = "bold", colour = "grey30"),
+      plot.background = element_rect(fill = "grey80"),
+      legend.background = element_rect(fill = "grey80"),
+      title = element_text(size = 16, face = "italic", colour = "grey30"),
+      plot.subtitle = element_text(size = 12)
+    )
+p_evolution
+```
+
+Create Table
+
+```{r}
+table <- tableGrob(
+  best_table, 
+  rows = NULL,
+  theme = ttheme_default(
+    base_colour = "grey10"
+  )
+)
+```
+
+Use patchwork to compose plot
+
+```{r}
+p_left <- (p_evolution / table)
+p_right <- p_taylor / 
+       p_drake / 
+       p_pink + 
+       plot_layout(guides = "collect") & 
+       theme(
+          legend.position = "bottom",
+          plot.background = element_rect(fill = "grey80", colour = "grey80"),
+          title = element_text(size = 16, face = "italic", colour = "grey30")
+        ) 
+   
+
+final_plot <- (p_left | p_right) +
+  plot_annotation(
+    caption = "Albert Rapp, albert-rapp.de, @rappa753"
+  ) + 
+  plot_layout(widths = c(0.4, 0.6)) &
+  theme(
+    plot.background = element_rect(fill = "grey80", colour = "grey80"),
+    plot.caption = element_text(color = "grey30", face = "bold")
+  ) 
+```
+
+Save file
+
+```{r}
+ggsave(
+  "2021_w38_billboard-plot.png",
+  final_plot,
+  width = 25, 
+  units = "cm"
+)
+```
+
+
