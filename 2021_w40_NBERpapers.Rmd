@@ -1,0 +1,178 @@
+---
+title: "2021_w40_NBERpapers"
+author: "Albert Rapp"
+date: "28 9 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+papers <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-09-28/papers.csv')
+authors <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-09-28/authors.csv')
+programs <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-09-28/programs.csv')
+paper_authors <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-09-28/paper_authors.csv')
+paper_programs <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-09-28/paper_programs.csv')
+```
+
+Let's bring these tables together by joining them.
+
+```{r}
+dat <- paper_programs %>% 
+  left_join(programs, by = "program") %>% 
+  left_join(paper_authors, by = "paper") %>% 
+  left_join(authors, by = "author") %>% 
+  left_join(papers, by = "paper") %>% 
+  mutate(catalogue_group = str_sub(paper, 1, 1)) %>% 
+  mutate(
+    catalogue_group = case_when(
+      catalogue_group == "h" ~ "Historical",
+      catalogue_group == "t" ~ "Technical",
+      catalogue_group == "w" ~ "General"
+    )
+  )
+```
+
+
+Let's try to manually do a micro vs. macro split violin plot over time.
+First, take a look at the manual counts to see if that looks possible.
+
+```{r}
+counts <- dat %>% 
+  filter(str_detect(program_category, "Micro") |  
+           str_detect(program_category, "Macro")) %>% 
+  count(program_category, year) %>% 
+  mutate(
+    n = if_else(str_detect(program_category, "Micro"), n, -n)
+  ) 
+
+count_plot <- counts %>% 
+  ggplot(aes(x = n, y = factor(year), fill = program_category)) +
+  geom_col() +
+  scale_y_discrete(breaks = seq(1975, 2021, 5)) +
+  coord_cartesian(xlim = c(-9000, 9000))
+count_plot
+```
+
+This looks like it might be suitable for a decent plot.
+Thus, compute the densities.
+
+```{r}
+estimate_density <- function(dat, variable) {
+  dens <- dat %>% 
+    filter(program_category == variable) %>% 
+    pull(year) %>%
+    abs() %>% 
+    density()
+  
+  tibble(
+    year = dens$x,
+    count = dens$y,
+    program_category = variable
+  ) %>% 
+  mutate(count = if_else(program_category != "Micro", -count, count))
+}
+
+  
+dens <- dat %>% 
+  estimate_density("Micro") %>% 
+  bind_rows(dat %>% estimate_density("Macro/International")) 
+
+uncropped <- dens %>% 
+  ggplot(aes(count, year, fill = program_category)) +
+  geom_polygon()
+uncropped
+```
+
+Now crop to range
+
+```{r}
+year_range <- dat$year %>% range()
+
+add_entries <- function(dens, variable) {
+  dens %>% 
+    filter(
+      between(year, year_range[1], year_range[2]),
+      program_category == variable
+    ) %>% 
+    bind_rows(
+      tibble(
+        year = year_range[1], 
+        count =  0, 
+        program_category = variable
+      ), .) %>% 
+    bind_rows(
+      tibble(year = year_range[2], count =  0, program_category = variable)
+    )
+}
+
+cropped_plot <- dens %>% 
+  add_entries("Micro") %>% 
+  bind_rows(dens %>% add_entries("Macro/International")) %>% 
+  ggplot(aes(count, year, fill = program_category)) +
+  geom_polygon() +
+  coord_cartesian(xlim = c(-0.09, 0.09))
+cropped_plot
+```
+
+
+Adjust scales and labels
+
+```{r}
+count_plot_adj <- count_plot +
+  scale_fill_brewer(palette = "Set1") +
+  scale_y_discrete(
+    breaks = seq(1980, 2020, 10)
+  ) +
+  labs(
+    x = element_blank(),
+    y = "Year", 
+    fill = "Program"
+  )
+
+croped_plot_adj <- cropped_plot +
+  scale_fill_brewer(palette = "Set1") +
+  scale_x_continuous(breaks = NULL) +
+  scale_y_continuous(breaks = seq(1980, 2020, 10), minor_breaks = NULL) +
+  labs(
+    x = element_blank(),
+    y = "Year", 
+    fill = "Program"
+  )
+
+```
+
+
+```{r}
+library(patchwork)
+arranged <- count_plot_adj + croped_plot_adj + 
+  plot_annotation(
+    title = "Macro vs. Micro",
+    subtitle = "Comparing the Amount of Publications distributed by the NBER",
+    caption = "A TidyTuesday contribution by @rappa753"
+  ) +
+  plot_layout(guides = "collect", heights = 1) &
+  theme_light() +
+  theme(
+    legend.position = "top",
+    text = element_text(size = 12, face = "bold")
+  ) 
+arranged
+```
+
+Save plot
+
+```{r}
+ggsave(
+  "2021_w40_NBERpapers.png", 
+  arranged,
+  width = 30,
+  height = 30 * 9 / 16,
+  units = "cm"
+)
+```
+
