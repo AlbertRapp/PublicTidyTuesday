@@ -1,0 +1,206 @@
+---
+title: "2021_w41_nurses"
+author: "Albert Rapp"
+date: "6 10 2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Load data and clean names
+
+```{r}
+library(tidyverse)
+library(paint)
+nurses <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-05/nurses.csv')
+
+nurses <- nurses %>% janitor::clean_names()
+```
+
+Rearrange most of the columns by pivoting
+
+```{r}
+nurses <- nurses %>% 
+  rename(hourly_50th_percentile = hourly_wage_median) %>% 
+  rename(annual_50th_percentile = annual_salary_median) 
+
+percentiles_idx <- nurses %>% 
+  colnames() %>% 
+  str_detect("percentile") %>% 
+  which()
+
+
+others_idx <- nurses %>% 
+  colnames() %>% 
+  str_detect("percentile") %>% 
+  {!.} %>% 
+  which()
+
+percentile_wages <- nurses %>% select(percentiles_idx, state, year) %>% 
+  pivot_longer(
+    cols = -c("state", "year"),
+    names_pattern = "(.+)_(.{2})th_percentile",
+    names_to = c("time_frame", "percentile"),
+    values_to = "wage"
+  ) %>% 
+  mutate(percentile = as.numeric(percentile))
+
+cleaned_percentiles <- nurses %>% 
+  select(others_idx) %>% 
+  left_join(percentile_wages, by = c("state", "year"))
+```
+
+Get additional data from [Wikipedia](https://en.wikipedia.org/wiki/List_of_regions_of_the_United_States) to compare regions. 
+Text was copied into a csv-file `2021_w41_region_states.csv`.
+
+```{r}
+splitting_regex <- "(,\\s){1}(and\\s)?"
+splitting_regex2 <- "((\\.|;)\\s){1}(and\\s)?"
+split_states <- function(str) {
+  if (str_detect(str, "D.C.")) {
+    split_regex <- splitting_regex2
+  } else {
+    split_regex <- splitting_regex
+  }
+  str %>% str_split(split_regex) %>% unlist()
+}
+
+# Copied text from Wikipedia into a csv file and split it using regexes
+regions <- read_csv2("2021_w41_region_states.csv", col_names = F) %>% 
+  rename(region = X1, state = X2) %>% 
+  mutate(state = map(state, split_states)) %>% 
+  unnest(state) %>% 
+  mutate(state = if_else(state == "Washington, D.C", "District of Columbia", state))
+
+state_region_hourlies <- cleaned_percentiles %>%
+  filter(time_frame == "hourly") %>% 
+  select(state, year, wage, percentile) %>% 
+  left_join(regions, by = "state") %>% 
+  mutate(region = if_else(is.na(region), "Other", region))
+
+```
+
+
+Let's try to use `gt` to make a table.
+
+```{r}
+library(gt)
+library(gtExtras)
+tbl <- state_region_hourlies %>% 
+  filter(percentile == 50, year == 2020) %>% 
+  arrange(desc(wage)) %>% 
+  select(state, wage, region) 
+
+tbl %>% 
+  gt(groupname_col = "region") %>% 
+  cols_label(
+    state = "State", 
+    wage = html("Median hourly wage<br>(in USD)")
+  ) %>% 
+  gt_hulk_col_numeric(wage)
+```
+
+First attempt looks interesting.
+Let's try to add another column with confidence intervals since we have some quantiles in the data set.
+First, create the plots and save them as PNGs.
+Make sure they are large enough for later import into the table.
+
+```{r}
+hourlies_2020 <- state_region_hourlies %>% 
+  filter(year == 2020) %>% 
+  mutate(
+    new_col_names = case_when(
+      percentile == 50 ~ "median",
+      percentile == 10 ~ "lower_80",
+      percentile == 90 ~ "upper_80",
+      percentile == 25 ~ "lower_50",
+      percentile == 75 ~ "upper_50",
+    )
+  ) %>% 
+  pivot_wider(
+    id_cols = c("state", "region"),
+    names_from = new_col_names,
+    values_from = wage
+  ) 
+
+interval_color1 <- "Dodgerblue1"
+interval_color2 <- "Dodgerblue3"
+median_color <- "Firebrick4"
+range_wages <- state_region_hourlies %>% 
+  filter(year == 2020) %>% 
+  pull(wage) %>% 
+  range()
+
+
+create_confidence_bar_rect <- function(state) {
+  plt <- hourlies_2020 %>% 
+    filter(state == !!state) %>% 
+    ggplot() +
+    geom_rect(
+      ymin = 0, ymax = 1,
+      aes(xmin = lower_80, xmax = upper_80), 
+      alpha = 0.5, 
+      fill = interval_color1
+    ) +
+    geom_rect(
+      ymin = 0, ymax = 1,
+      aes(xmin = lower_50, xmax = upper_50), 
+      size = line_size, 
+      alpha = 0.75, 
+      fill = interval_color2
+    ) +
+    geom_rect(
+      ymin = 0, ymax = 1,
+      aes(xmin = median*.99, xmax = median*1.01), 
+      fill = median_color
+    ) +
+    coord_cartesian(xlim = range_wages, ylim = c(0, 1), expand = T) +
+    theme_void()
+  
+  ggsave(
+    glue::glue("2021_w41_nurses_pngs/{state}.png"), 
+    plt,
+    width = 120,
+    height = 5,
+    units = "cm"
+  )
+}
+
+tbl$state %>% walk(create_confidence_bar_rect)
+```
+
+Use the pngs and add them to table via `gt_img_rows`.
+Add some custom options et voilà.
+
+```{r}
+html_text <- '<p style="color:#1874cd; display:inline"; >50%</p> / <p style="color:#1e90ff; display:inline";>90%</p> Confidence-Intervalls and <p style="color:	#8b1a1a; display:inline";>Median</p>'
+
+tbl %>% 
+  mutate(state_plot = glue::glue("2021_w41_nurses_pngs/{state}.png")) %>% 
+  gt(groupname_col = "region") %>% 
+  gt_img_rows(columns = "state_plot", img_source = "local", height = 15) %>% 
+  gt_theme_nytimes() %>% 
+  cols_label(
+    state = "State", 
+    wage = html("Median hourly wage<br>(in USD)"),
+    state_plot = html(html_text)
+  ) %>% 
+  gt_hulk_col_numeric(wage) %>% 
+  tab_options(
+    data_row.padding = px(1),
+    row_group.background.color = "grey70",
+    row_group.font.weight = "bold",
+    column_labels.font.weight = "bold",
+    column_labels.font.size = 20
+  ) %>% 
+  tab_style(
+    locations = cells_body(columns = "wage"),
+    style = list(
+      cell_text(font = "bold", align = "center")
+    )
+  )
+  
+```
+
+
+
