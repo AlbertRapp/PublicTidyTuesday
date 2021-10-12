@@ -1,0 +1,169 @@
+---
+title: "2021_w42_global_fishing"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(tidyverse)
+farmed <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-12/aquaculture-farmed-fish-production.csv')
+captured_vs_farmed <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-12/capture-fisheries-vs-aquaculture.csv')
+captured <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-12/capture-fishery-production.csv')
+consumption <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-12/fish-and-seafood-consumption-per-capita.csv')
+stock <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-12/fish-stocks-within-sustainable-levels.csv')
+fishery <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-12/global-fishery-catch-by-sector.csv')
+production <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-12/seafood-and-fish-production-thousand-tonnes.csv')
+
+```
+
+
+```{r}
+fishery_longer <- fishery %>% 
+  pivot_longer(-(1:3), names_to = "sector", values_to = "amount")
+```
+
+```{r}
+fishery_longer %>% count(Entity)
+global_fishery_sectors <- fishery_longer %>% janitor::clean_names()
+```
+
+So, fishery contains only entity "World".
+Thus, let"s name that `global_fishery_sectors`
+
+```{r}
+amounts_plot <- global_fishery_sectors %>% 
+  filter(sector != "Recreational") %>% 
+  mutate(
+    sector = fct_reorder(sector, amount)
+  ) %>% 
+  ggplot(aes(year, amount, fill = sector)) +
+  geom_col() +
+  # geom_label(
+  #   data = filter(global_fishery_sectors, sector != "Recreational", year == 2010),
+  #   aes(x = year, y = amount, label = sector),
+  #   position = position_stack(vjust = 0.5),
+  #   color = 'white',
+  #   size = 8
+  # ) +
+  scale_y_continuous(labels = scales::number) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(
+    legend.position = c(0.25, 0.8),
+    text = element_text(face = 'bold', size = 12),
+    plot.title.position = 'plot'
+  ) +
+  labs(
+    x = "Year",
+    y = "Tonnes of fish",
+    fill = "Sector",
+    subtitle = "Amount of world-wide fish production"
+  )
+amounts_plot
+```
+
+
+Take a look at `stock` and rearrange the columns a bit.
+
+```{r}
+sustainable_overexploited_shares <- stock %>%
+  janitor::clean_names() %>% 
+  select(-code) %>% 
+  rename_with(~case_when(
+    str_detect(., "biologically") ~ "sustainable",
+    str_detect(., "overexploited") ~ "overexploited",
+    TRUE ~ .
+  )) %>% 
+  pivot_longer(3:4, names_to = "type", values_to = "share")
+```
+
+
+```{r}
+sustainable_overexploited_shares %>% 
+  count(entity)
+```
+
+
+Since there are only four observations in the regions other than "World", let's ignore them.
+
+```{r}
+sustainable_overexploited_shares %>% 
+  filter(entity == "World") %>% 
+  ggplot(aes(x = year, y = share, fill = type)) +
+  geom_col(position = 'fill')
+```
+
+There are a lot of missing years. 
+Ideally, I would like to fill the gaps, by letting the values stay constant.
+Also, I want to indicate by some shading that these values are only "guesses".
+Overall, I hope that this makes a visual comparison over time easier for the reader.
+
+```{r}
+filled_shares <- sustainable_overexploited_shares %>% 
+  filter(entity == "World") %>% 
+  complete(year = 1974:2017, type = c('sustainable', 'overexploited')) %>% 
+  mutate(filled = if_else(is.na(share), T, F)) %>% 
+  group_by(type) %>% 
+  group_split() %>% 
+  map(~fill(., entity, type, share)) %>% 
+  bind_rows()
+
+shares_plot <- filled_shares %>% 
+  mutate(fill_dummy = str_c(type, filled, sep = '_')) %>% 
+  ggplot(aes(x = year, y = share, fill = type, alpha = filled)) +
+  geom_col(position = 'fill') +
+  geom_label(
+    x = 1985, 
+    y = 0.10, 
+    label = 'sustainable',
+    fontface = "bold",
+    size = 12,
+    color = 'white'
+    ) +
+  geom_label(
+    x = 2005, 
+    y = 0.90, 
+    label = 'overexploited',
+    fontface = "bold",
+    size = 12,
+    color = 'white',
+    fill = RColorBrewer::brewer.pal(3, "Set1")[1]
+    ) +
+  scale_alpha_manual(values = c(1, 0.7)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    x = "Year", 
+    y = element_blank(), 
+    subtitle = "Share of sustainable World-wide fishing",
+    caption = "Lighter tones indicate missing values being filled with last available data"
+  ) +
+  theme(
+    legend.position = 'none',
+    plot.title.position = 'plot',
+    text = element_text(size = 12, face = 'bold')
+  )
+shares_plot
+```
+
+Arrange both plots
+
+```{r}
+library(patchwork)
+collected_plot <- amounts_plot + shares_plot +
+  plot_annotation(
+    title = "Even though the overall fish-production decreased in recent years, the share of overexploited fish stock increased"
+  ) &
+  theme(text = element_text(size = 14, face = 'bold'))
+collected_plot
+ggsave(
+  '2021_w42_global_fishing.png',
+  collected_plot,
+  width = 40,
+  height = 40 * 9 / 16, 
+  units = 'cm'
+)
+```
+
+
