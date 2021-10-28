@@ -1,0 +1,254 @@
+---
+title: "2021 w44"
+author: "Albert Rapp"
+date: "26 10 2021"
+output: html_document
+---
+
+
+```{r}
+library(tidyverse)
+ultra_rankings <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-26/ultra_rankings.csv')
+race <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-26/race.csv')
+```
+
+
+```{r}
+convert_race_names <- function(distance, name) {
+  if (distance != 0) {
+    number <- distance
+  } else {
+    number <- parse_number(name)
+    if (!is.na(number)) {
+      number <- NA
+    } else if (!str_detect(name, "(k|km)")) {
+      number <- number
+    } else {
+      number <- round(number * 1.609) # miles to km
+    }
+  }
+  number
+}
+
+race_new <- race %>% 
+  mutate(
+    distance = map2_dbl(distance, race, convert_race_names),
+    participation = tolower(participation), 
+  ) %>% 
+  filter(!is.na(distance))
+```
+
+
+
+```{r}
+dat <- ultra_rankings %>% 
+  left_join(race_new, by = "race_year_id") %>% 
+  mutate(speed = (time_in_seconds / 60) / distance) # minutes per km
+```
+
+
+Get rid of missing speeds and genders.
+
+```{r}
+dat <- dat %>% 
+  filter(!is.na(speed), !is.na(gender)) %>% 
+  mutate(gender = if_else(gender == "M", "Men", "Women"))
+```
+
+
+
+```{r}
+dat %>% 
+  group_by(gender) %>% 
+  summarize(
+    mean_speed = mean(speed, na.rm = T),
+    median_speed = median(speed, na.rm = T)
+  )
+
+dat %>% 
+  group_by(gender, race) %>% 
+  slice_min(speed) %>% 
+  group_by(gender) %>% 
+  summarize(
+    mean_speed = mean(speed, na.rm = T),
+    median_speed = median(speed, na.rm = T)
+  )
+```
+
+So, it looks like overall the median and mean speed of women is better (lower - speed is min/km) but w.r.t. to the top speeds the men dominate.
+
+```{r}
+library(patchwork)
+library(gghighlight)
+library(ggtext)
+library(ggdist)
+library(grid)
+library(gridtext)
+
+color_palette <- c("#0072B2", "#D55E00")
+# blue/vermillion from Okabe Ito
+
+text_size <- 12.5
+
+percentages_gender <- dat %>% 
+  group_by(gender) %>% 
+  summarise(n = n()) %>% 
+  mutate(prop = n / sum(n)) %>% 
+  mutate(name = "Participants")
+
+percentages_winner <- dat %>% 
+  filter(rank < 2) %>% 
+  group_by(gender) %>% 
+  summarise(n = n()) %>% 
+  mutate(prop = n / sum(n)) %>% 
+  mutate(name = "Winners")
+
+combined_data <- percentages_winner %>% 
+  bind_rows(percentages_gender) %>% 
+  mutate(name = factor(name, levels = c("Winners", "Participants")))
+
+percentage_plot <-  combined_data %>%  
+  ggplot(aes(x = prop, y = name, fill = gender)) +
+  geom_col(position = "fill") +
+  theme_void() +
+  theme(
+    legend.position = "none",
+    text = element_text(size = text_size, face = "bold"),
+    axis.text.y = element_text(hjust = 0.9),
+    plot.title.position = "plot",
+  ) +
+  coord_cartesian(expand = F) +
+  geom_text(
+    data = combined_data %>% filter(gender == "Men"),
+    aes(x = 0.5, label = glue::glue("{gender} - {scales::percent(prop)}")),
+    color = "white",
+    fontface = "bold",
+    size = 5
+  ) +
+  scale_fill_manual(values = color_palette) 
+
+age_speed_jitter <- dat %>% 
+  filter(rank < 2) %>% 
+  ggplot(aes(x = age, y = speed, fill = gender)) +
+  geom_jitter(shape = 21, size = 3.5) +
+  gghighlight(gender == "Women", use_direct_label = F, use_group_by = F) +
+  scale_fill_manual(values = rev(color_palette)) +
+  theme_light() +
+  theme(
+    legend.position = "none",
+    plot.title.position = "plot", 
+    text = element_text(size = text_size, face = "bold"),
+    axis.text.y = element_text(vjust = 0.95)
+  ) +
+  labs(
+    x = "Age",
+    y = "Speed (in min / km)",
+  ) +
+  annotate(
+    "text", 
+    x = 13.5, y = 19, 
+    label = "Points shows only race winners", 
+    fontface = "bold"
+  ) +
+  annotate(
+    geom = "curve", 
+    x = 14, 
+    y = 18.5, 
+    xend = 25, 
+    yend = 14, 
+    curvature = .4,
+    arrow = arrow(length = unit(4, "mm")),
+    size = 1.25
+  )
+
+women_text <- '<span style="color:#D55E00;font-size:18pt;">women</span>'
+men_text <- '<span style="color:#0072B2;font-size:18pt;">men</span>'
+
+displ_text <- glue::glue(
+'<span style="font-size:18pt">**Two stories on ultra trail running:**</span><br>
+1. The left-hand side of this plot shows that {women_text} are on average faster than {men_text}.<br>
+2. The right-hand side shows that participants and winners are mostly {men_text}.'
+)
+
+text_plot <- richtext_grob(
+  displ_text, 
+  halign = 0.0, 
+  gp = gpar(fontsize = 13)
+)
+
+boxplot <- dat %>% 
+  ggplot(aes(x = speed, fill = gender)) +
+  geom_boxplot() +
+  scale_fill_manual(values = color_palette) +
+  theme_light() +
+  theme(
+    legend.position = "none",
+    text = element_text(size = text_size, face = "bold"),
+    axis.text.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank()
+  ) +
+  labs(x = "Speed (in min / km)")
+  
+slabs <- dat %>% 
+  ggplot(aes(x = speed, y = gender, fill = gender)) +
+  stat_slab(col = "black") +
+  scale_fill_manual(values = color_palette) +
+  theme_light() +
+  theme(
+    legend.position = "none",
+    text = element_text(size = text_size, face = "bold"),
+    axis.text.y = element_blank()
+  ) +
+  labs(x = "Speed (in min / km)", y = element_blank())
+
+
+plt <- (
+  (
+    wrap_elements(text_plot)  /  
+      boxplot + 
+      slabs +
+      plot_layout(heights = c(0.3, 0.3, 0.4))
+  )
+  |
+  (
+    percentage_plot / 
+      wrap_elements(full = age_speed_jitter) + 
+      plot_layout(heights = c(0.3, 0.7))
+   )  
+) + 
+  plot_layout(widths = c(0.6, 0.4)) + 
+  plot_annotation(caption = "A TidyTuesday Contribution by @RappA753") 
+plt
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
