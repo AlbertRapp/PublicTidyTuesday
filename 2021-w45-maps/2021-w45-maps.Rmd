@@ -1,0 +1,165 @@
+---
+title: "2021-w45-maps"
+author: "Albert Rapp"
+date: "2 11 2021"
+output: html_document
+---
+
+Get coffee data from Wikipedia since `coffee_data` from `spData` is a somewhat small data set.
+
+```{r}
+library(tidyverse)
+library(sf)
+library(spData)
+library(rvest)
+library(ggrepel)
+library(patchwork)
+
+wiki_url <- "https://en.wikipedia.org/wiki/List_of_countries_by_coffee_production#cite_note-:0-1"
+coffee_top15 <- read_html(wiki_url) %>% 
+  html_nodes("table") %>% 
+  html_table() %>% 
+  pluck(1) %>% 
+  slice(1:15) %>% 
+  janitor::clean_names()
+
+# Clean names so that data sets match
+world_new <- world %>% 
+  mutate(
+    name_long = case_when(
+      iso_a2 == "CI" ~ "Ivory Coast",
+      iso_a2 == "LA" ~ "Laos",
+      TRUE ~ name_long
+    )
+  )
+
+# China is an estimate from 13/14
+# Timor-Leste is written with an minus
+coffee_top15 %>% 
+  mutate(
+    country = if_else(str_detect(country, "China"), "China", country),
+    country = if_else(str_detect(country, "Timor Leste"), "Timor-Leste", country)
+  ) %>% 
+  anti_join(world_new, by = c("country" = "name_long")) 
+# Now this is empty, so we can safely join
+
+
+coffee_top15 <- coffee_top15 %>% 
+  mutate(
+    country = if_else(str_detect(country, "China"), "China", country),
+    country = if_else(str_detect(country, "Timor Leste"), "Timor-Leste", country)
+  ) %>% 
+  full_join(world_new, by = c("country" = "name_long")) %>% 
+  mutate(metric_tons = parse_number(metric_tons)) 
+```
+
+Create world map
+
+```{r}
+viridris_option <- "inferno"
+
+coffee_map <- coffee_top15 %>% 
+  ggplot() +
+  geom_sf(aes(geometry = geom, fill = metric_tons)) +
+  scale_fill_viridis_c(
+    trans = "log",
+    labels = scales::label_number(),
+    option = viridris_option
+  ) +
+  labs(fill = "Metric tons") +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  ) +
+  guides(
+    fill = guide_colorbar(
+      barwidth = unit(20, "cm"), 
+      barheight = unit(0.75, "cm"),
+      title.position = "left",
+      title.vjust = 0.75
+    )
+  )
+```
+
+Combine with bar chart
+
+```{r}
+coffee_top15_wo_all <- coffee_top15 %>% 
+  filter(rank <= 15) 
+
+map_and_cols <- coffee_top15_wo_all %>% 
+  filter(rank <= 15) %>% 
+  mutate(country = fct_reorder(country, metric_tons)) %>% 
+  ggplot(aes(x = metric_tons, y = country, fill = metric_tons)) +
+  geom_col() +
+  geom_text(
+    aes(label = scales::number(metric_tons)),
+    hjust = 0, 
+    nudge_x = 10000,
+    size = 5
+  ) +
+  theme_grey() +
+  coord_cartesian(xlim = c(0, 3.5e6), expand = F) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    axis.text.y = element_text(hjust = 1),
+    legend.position = "none"
+  ) +
+  scale_x_continuous(labels = scales::label_number()) +
+  scale_fill_viridis_c(trans = "log", option = viridris_option) +
+  labs(x = "Coffee production (in metric tons)", y = element_blank()) +
+  inset_element(coffee_map + theme(legend.position = "none"), 0.2, 0.01, 0.99, 0.7)
+```
+
+Generate two scatter plots using other quantities
+
+```{r}
+area_pop_plot <- coffee_top15_wo_all %>% 
+  ggplot(aes(x = pop, y = area_km2, fill = metric_tons)) +
+  geom_point(size = 6, shape = 21) +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_y_log10(labels = scales::label_number()) +
+  scale_fill_viridis_c(trans = "log", option = viridris_option) +
+  labs(x = "Population", y = "Area (in sq. km)") 
+
+gdp_life_plot <- coffee_top15_wo_all %>% 
+  ggplot(aes(x = gdpPercap, y = lifeExp, fill = metric_tons)) +
+  geom_point(size = 6, shape = 21) +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_y_log10(labels = scales::label_number()) +
+  scale_fill_viridis_c(trans = "log", option = viridris_option) +
+  labs(x = "GDP per capita", y = "Life expectancy at birth (in years)")
+```
+
+
+Arrange plot
+
+```{r}
+plt <- map_and_cols + 
+  (area_pop_plot / gdp_life_plot) +
+  plot_layout(widths = c(0.7, 0.3)) + 
+  plot_annotation(
+    title = "Top 15 Coffee Producers",
+    subtitle = "The coffee market is dominated by Brazil, Vietnam, Colombia and Indonesia",
+    caption = "Source: Coffee production data is from 2019 and taken from Wikipedia; All other quantitites are from 2014 and taken from R's 'spData' package | @rappA753"
+  ) &
+  theme(
+    text = element_text(size = 15), 
+    legend.position = "none",
+  ) 
+```
+
+
+Save everything
+
+```{r}
+ggsave(
+  "2021-w45-maps/2021-w45-maps.png",
+  plt,
+  width = 20,
+  height = 20 * 9 / 16
+)
+```
+
