@@ -1,0 +1,216 @@
+---
+title: "2021-w01"
+author: "Albert Rapp"
+date: "4 1 2022"
+output: html_document
+---
+
+https://ourworldindata.org/time-with-others-lifetime
+
+```{r}
+library(extrafont)
+library(tidyverse)
+library(gghighlight)
+library(khroma)
+library(ggtext)
+library(patchwork)
+time_data <- read_csv("2022-w01-own-data/time-spent-with-relationships-by-age-us.csv") %>% 
+  rename_with(
+    ~c('Entitity', 'Code', 'Age', 'alone', 'friends', 'children', 'parents', 
+       'partner', 'coworkers')
+  ) %>% 
+  pivot_longer(
+    cols = alone:coworkers, 
+    names_to = 'person',
+    values_to = 'minutes'
+  ) %>% 
+  janitor::clean_names() %>% 
+  filter(age <= 80) 
+
+```
+
+
+```{r}
+color_scale <- color('okabe ito')(7) %>% c() %>% .[-5] %>% unname() %>% rev()
+text_family <- 'Garamond'
+general_text_size <- 18
+label_size <- 8
+headline_size <- 12
+others_grey <- 'grey60'
+```
+
+Base timeline
+
+```{r}
+label_tib <- tribble(
+  ~x, ~y, ~person,
+  67, 415, 'alone',
+  70, 240, 'partner',
+  67, 110, 'coworkers',
+  45, 110, 'children',
+  32, 95, 'parents',
+  44, 25, 'friends'
+) 
+
+p <- time_data %>% 
+  ggplot(aes(x = age, y = minutes, col = person)) +
+  geom_line(size = 1.5) +
+  theme_classic() +
+  theme(
+    legend.position = 'none',
+    text = element_text(family = text_family, size = general_text_size)
+  ) +
+  geom_text(
+    data = label_tib, 
+    aes(x, y, label = person), 
+    size = label_size,
+    family = text_family
+  ) +
+  coord_cartesian(xlim = c(14, 81), expand = F) + 
+  scale_color_manual(values = color_scale) +
+  scale_x_continuous(breaks = seq(20, 80, 10)) + 
+  labs(x = 'Age (in years)', y = 'Minutes')
+p
+```
+
+
+```{r}
+alone_text <- glue::glue("We spend a lot of time <span style = 'color:{color_scale[1]};'>alone</span>...")
+
+alone_plot <- p +
+  gghighlight(
+    person %in% c('alone'), 
+    keep_scales = T, 
+    use_direct_label = F,
+    use_group_by = F,
+    unhighlighted_params = list(colour = others_grey)
+  ) +
+  annotate(
+    'richtext',
+    x = 15,
+    y = 450,
+    label = alone_text,
+    hjust = 0,
+    size = headline_size,
+    label.colour = NA,
+    family = text_family
+  )
+alone_plot
+```
+
+
+
+But the most of our life is spent not alone but with others
+
+```{r}
+others_text <- glue::glue("...but most of our life<br> is spent with <span style = 'color:{others_grey};'>others</span>.")
+
+others_plot <- time_data %>% 
+  ggplot(aes(x = age, y = minutes, fill = person)) +
+  geom_col(position = 'fill', width = 1) +
+  geom_hline(yintercept = 0.5, col = 'white', size = 1) +
+  coord_cartesian(expand = F) +
+  scale_fill_manual(values = c(color_scale[1], rep(others_grey, 5))) +
+  scale_x_continuous(breaks = seq(20, 80, 10)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = 'Age (in years)', y = 'Proportion of time spent alone or with others') +
+  theme_classic() +
+  theme(
+    legend.position = 'none',
+    text = element_text(family = text_family, size = general_text_size)
+  ) +
+  annotate(
+    'richtext',
+    x = 79.9,
+    y = 0.99,
+    hjust = 1,
+    vjust = 1,
+    label = others_text,
+    size = headline_size,
+    label.colour = NA,
+    family = text_family
+  )
+others_plot
+```
+
+Approximately around the age of 40 one's own children leave the house and the additional time is mostly spe
+nt alone.
+
+```{r}
+age_40_text <- glue::glue("Around the age of 40, we spent less <br> time with <span style = 'color:{color_scale[2]};'>children</span> and more <br> time <span style = 'color:{color_scale[1]};'>alone</span>.")
+
+
+# have to manually make text labels grey for some reason
+text_label_scale <- c(color_scale[1:2], rep(NA, 4))
+age_40_plot <- p +
+  gghighlight(
+    person %in% c('alone', 'children'), 
+    age >= 39,
+    keep_scales = T, 
+    use_direct_label = F,
+    use_group_by = F
+  ) +
+  geom_segment(x = 39, xend = 39, y = 0, yend = 400, linetype = 3, col = 'black') +
+  scale_color_manual(values = text_label_scale) 
+
+annotation <- annotate(
+  'richtext',
+  x = 15,
+  y = 470,
+  label = age_40_text,
+  hjust = 0,
+  vjust = 1,
+  size = headline_size,
+  label.colour = NA,
+  family = text_family
+)
+# Rearrange order of layers such that text box blocks segment but not 'alone' line
+age_40_plot$layers <- c(age_40_plot$layers[6], annotation, age_40_plot$layers[-6])
+age_40_plot
+```
+
+
+
+```{r}
+spacing_row1 <- 0.025
+layout_row1 <- c((1 - spacing_row1) / 2, spacing_row1, (1 - spacing_row1) / 2)
+
+spacing_row2 <- 0.6
+layout_row2 <- c((1 - spacing_row2) / 2, spacing_row2, (1 - spacing_row2) / 2)
+
+spacing_heighs <- 0.05
+layout_heights <- c((1 - spacing_heighs) / 2, spacing_heighs, (1 - spacing_heighs) / 2)
+
+final_plot <- (alone_plot + plot_spacer()+ others_plot + plot_layout(widths = layout_row1)) / 
+  plot_spacer() /
+  (plot_spacer() + age_40_plot + plot_spacer() + plot_layout(widths = layout_row2)) +
+  plot_layout(heights = layout_heights) +
+  plot_annotation(
+    title = 'Who do we spent our time with over the years?',
+    subtitle = 'Based on the average amount of minutes reported in surveys in the US from 2009 to 2019; by age of respondent',
+    caption = 'TidyTuesday 2022 - Week 1 | Data: ourworldindata.org | Visualization by Albert Rapp | Twitter: @rappa753',
+    theme = theme(
+      text = element_text(family = text_family, size = 2 * headline_size),
+      plot.title = element_text(colour = color_scale[3], face = 'bold'),
+      plot.subtitle = element_text(colour = color_scale[3]),
+      plot.caption = element_text(size = headline_size),
+      plot.background = element_rect(fill = 'grey80')
+    )
+  ) 
+final_plot
+```
+
+```{r}
+ggsave(
+  '2022-w01-own-data/2022-w01-own-data.png',
+  final_plot,
+  width = 60,
+  height = 60 * 9 / 16,
+  units = 'cm'
+)
+```
+
+
+
+
+
