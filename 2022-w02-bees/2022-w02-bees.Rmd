@@ -1,0 +1,124 @@
+---
+title: "2022-w02"
+author: "Albert Rapp"
+date: "11 1 2022"
+output: html_document
+---
+
+
+```{r}
+library(extrafont)
+library(tidyverse)
+library(sf)
+library(geojsonio)
+library(broom)
+library(rgeos)
+library(animation)
+colony <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-11/colony.csv') %>% 
+  filter(year != '6/') %>% 
+  mutate(year = as.numeric(year))
+stressor <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-11/stressor.csv')
+```
+
+Code adapted from [Abdoul Madjid](https://github.com/AbdoulMa/30DayMapChallenge/tree/main/Day4) to get hexagon map with centroids.
+
+```{r}
+dat <- geojson_read(
+  here::here('2022-w02-bees/us_states_hexgrid.geojson'), 
+  what = 'sp'
+)
+dat@data <- dat@data %>% 
+  mutate(google_name = str_remove(google_name, ' \\(United States\\)'))
+dat_fortified <- tidy(dat, region = "google_name")
+
+# Calculate the centroid of each hexagon to add the label:
+centers <- cbind.data.frame(
+  data.frame(
+    gCentroid(dat, byid=TRUE), 
+    id=dat@data$iso3166_2, 
+    State = dat@data$google_name, 
+    label = dat@data$label
+  )
+)
+
+ggplot() +
+  geom_polygon(
+    data = dat_fortified, aes(x = long, y = lat, group = group),
+    fill = 'yellow',
+    col = 'black'
+  ) +
+  geom_text(data = centers, aes(x, y, label = id )) +
+  theme_void()
+```
+
+Now, make actual map.
+
+```{r}
+plot_bees <- function(year, months) {
+  filtered_colony <- colony %>% 
+    filter(year == !!year, months == !!months)  %>% 
+    full_join(dat_fortified, by = c("state" = "id"))
+  
+  filtered_colony %>% 
+    ggplot() +
+    geom_polygon(
+      aes(x = long, y = lat, group = group, fill = colony_n),
+      col = '#a26b27',
+      size = 1.5
+    ) +
+    geom_text(
+      data = centers, aes(x, y, label = id),
+      col = 'white',
+      fontface = 'bold',
+      size = 4.5,
+      family = "Cooper Black"
+    ) +
+    scale_fill_gradient2(
+      high = '#f6e000',
+      mid = '#f9c901',
+      low = '#a26b27',
+      midpoint = quantile(
+        seq(min(colony$colony_n), max(colony$colony_n), length.out = 6),
+        0.4
+      ) %>% log,
+      trans = "log",
+      breaks = c(1000, 20000, 300000, 3200000),
+      labels = scales::number,
+      limits = c(1000, 3200000)
+    ) +
+    guides(fill = guide_colorbar(
+      title = 'Number of bee colonies',
+      title.hjust = 0,
+      title.position = 'top',
+      barwidth = unit(220, 'mm'),
+      barheight = unit(6, 'mm')
+    )) +
+    theme_void() +
+    theme(
+      legend.position = c(0.2, 0.85),
+      legend.direction = 'horizontal',
+      legend.justification = c(0, 0),
+      text = element_text(family = "Cooper Black", size = 18),
+      plot.title.position = 'plot',
+      plot.caption = element_text(face = 'plain', size = 14)
+    ) +
+    labs(
+      title = glue::glue('Bee Population in the US ({str_split(months, "-") %>% pluck(1) %>% str_c(collapse = " - ")} {year})'),
+      caption = 'TidyTuesday, 2022 week 2 | Graphics: Albert Rapp (@rappa753) | Inspriation: Abdoul ISSA BIDA (@issa_madjid)'
+    )
+}
+
+
+plots <- colony %>% 
+  select(year, months) %>% 
+  unique() %>% 
+  mutate(plot = map2(year, months, plot_bees))
+
+saveGIF(
+  map(plots$plot, print), 
+  ani.width = 1280, 
+  ani.height = 720,
+  ani.name = here::here('2022-w02-bees/animation.gif')
+)
+
+```
