@@ -1,0 +1,112 @@
+---
+title: "2022-w04-boardgames"
+author: "Albert Rapp"
+date: "25 1 2022"
+output: html_document
+---
+
+Load data
+
+```{r}
+ratings <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-25/ratings.csv')
+details <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-25/details.csv')
+```
+
+Load packages
+
+```{r}
+library(extrafont)
+library(tidyverse)
+library(geomtextpath)
+```
+
+```{r}
+games <- ratings %>% 
+  left_join(details, by = 'id') %>% 
+  select(-c(num.x, num.y, thumbnail, url, primary, yearpublished)) 
+
+games <- games %>% 
+  filter(!is.na(boardgamecategory), between(year, 2000, 2020)) %>% 
+  mutate(
+    boardgamecategory = str_match_all(boardgamecategory, "\'([a-zA-Z\\s]+)\'"),
+    boardgamecategory = map(boardgamecategory, ~.[, 2])
+  ) 
+```
+
+
+```{r}
+most_frequent_categories_ts <- games %>% 
+  unnest(boardgamecategory) %>% 
+  mutate(boardgamecategory = fct_lump(boardgamecategory, n = 5)) %>% 
+  filter(boardgamecategory != 'Other', !is.na(average)) 
+
+dat <- most_frequent_categories_ts %>% 
+  group_by(boardgamecategory) %>% 
+  summarise(
+    dens_x = density(average)$x,
+    dens_y = density(average)$y,
+    .groups = 'drop'
+  ) %>% 
+  mutate(
+    dens_y = dens_y / max(dens_y) * 0.8,
+    dens_y = dens_y + case_when(
+      boardgamecategory == 'Card Game' ~ 1, 
+      boardgamecategory == 'Dice' ~ 2,
+      boardgamecategory == 'Fantasy' ~ 3,
+      boardgamecategory == 'Party Game' ~ 0,
+      boardgamecategory == 'Wargame' ~ 4
+    )
+  ) %>% 
+  filter(dens_x > 3, (dens_x > 5 | boardgamecategory != 'Wargame'))
+
+p <- dat %>% 
+  ggplot(aes(x = dens_x, y = dens_y, fill = boardgamecategory)) +
+  geom_textpath(
+    aes(
+      col = boardgamecategory, 
+      label = boardgamecategory, 
+      hjust = case_when(
+        boardgamecategory == 'Card Game' ~ 0.2, 
+        boardgamecategory == 'Dice' ~ 0.3,
+        boardgamecategory == 'Fantasy' ~ 0.35,
+        boardgamecategory == 'Party Game' ~ 0.2,
+        boardgamecategory == 'Wargame' ~ 0.15
+      )), 
+    vjust = -0.2, 
+    text_only = T,
+    size = 12,
+    family = 'Garamond'
+  ) +
+  geom_polygon() +
+  geom_boxplot(
+    data = most_frequent_categories_ts, 
+    aes(x = average, y = case_when(
+      boardgamecategory == 'Card Game' ~ 1, 
+      boardgamecategory == 'Dice' ~ 2,
+      boardgamecategory == 'Fantasy' ~ 3,
+      boardgamecategory == 'Party Game' ~ 0,
+      boardgamecategory == 'Wargame' ~ 4
+    )),
+    size = 1.5, width = 0.2, outlier.shape = NA
+  ) +
+  theme_light() +
+  theme(
+    legend.position = 'none',
+    text = element_text(size = 20, family = 'Garamond'),
+    plot.caption = element_text(size = 12)
+  ) + 
+  scale_y_continuous(breaks = NULL, minor_breaks = NULL) +
+  scale_fill_manual(values = thematic::okabe_ito(5)) +
+  scale_color_manual(values = thematic::okabe_ito(5)) +
+  labs(
+    x = 'Game rating', 
+    y = element_blank(),
+    title = 'Ratings of the five most frequent board game genres',
+    caption = 'TidyTuesday 2022 - Week 4 | Data: kaggle.com | Viz: Albert Rapp, @rappa753'
+  )
+
+p
+ggsave('2022-w04-boardgames/boardgames.png', p, width = 30, height = 30 * 9 / 16, unit = 'cm')
+```
+
+
