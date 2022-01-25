@@ -1,0 +1,70 @@
+---
+title: "2022-w03-choclate"
+author: "Albert Rapp"
+date: "19 1 2022"
+output: html_document
+---
+
+
+
+```{r}
+library(tidyverse)
+library(reactable)
+library(reactablefmtr)
+
+chocolate <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-18/chocolate.csv') %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    description = str_to_title(most_memorable_characteristics),
+    cocoa_percent = as.numeric(str_remove(cocoa_percent, '\\%')) / 100,
+  ) %>% 
+  select(-c(ref, ingredients, most_memorable_characteristics, specific_bean_origin_or_bar_name, review_date, country_of_bean_origin))
+```
+
+
+```{r}
+chocolate %>% 
+  select(company_location, company_manufacturer, cocoa_percent, rating, description) %>% 
+  reactable(
+    searchable = TRUE,
+    theme = reactableTheme(
+      borderColor = "#dfe2e5",
+      stripedColor = "#f6f8fa",
+      highlightColor = "#f0f5f9",
+      cellPadding = "20px 20px",
+      style = list(
+        fontFamily = "Caladea",
+        backgroundColor = '#C1C1C1'
+      ),
+      searchInputStyle = list(width = "100%")
+    ),
+    defaultSortOrder = "desc",
+    defaultSorted = c('cocoa_percent', 'rating'),
+    columns = list(
+      rating = colDef(
+        name = 'Rating',
+        cell = icon_assign(
+          chocolate, 
+          icon = 'cookie-bite', 
+          fill_color = '#805a46',
+          buckets = 9
+        )
+      ),
+      company_manufacturer = colDef(name = 'Manufacturer'),
+      company_location = colDef(name = 'Location'),
+      cocoa_percent = colDef(
+        name = 'Percent of cocoa',
+        cell = data_bars(
+          chocolate, 
+          fill_color = '#805a46',
+          number_fmt = scales::percent,
+          text_color = 'white',
+          bold_text = T,
+          bar_height = 20
+        )
+      ),
+      description = colDef(name = 'Description')
+    )
+  ) 
+
+```
