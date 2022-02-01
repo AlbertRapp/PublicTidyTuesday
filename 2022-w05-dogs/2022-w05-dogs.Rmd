@@ -1,0 +1,175 @@
+---
+title: "2022-w05-dogs"
+author: "Albert Rapp"
+date: "1 2 2022"
+output: html_document
+---
+
+
+Load data
+
+```{r}
+library(tidyverse)
+library(showtext)
+font_add_google("Fira Sans", "firasans")
+showtext_auto()
+
+breed_traits <- readr::read_csv('2022-w05-dogs/breed_traits.csv') %>% 
+  pivot_longer(
+    cols = where(is.numeric), 
+    names_to = 'trait', 
+    values_to = 'rating'
+  ) %>% 
+  janitor::clean_names()
+
+trait_description <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-02-01/trait_description.csv') %>% 
+  janitor::clean_names()
+  
+breed_rank_all <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-02-01/breed_rank.csv') %>% 
+  janitor::clean_names() 
+```
+
+Joining and Averaging
+
+```{r}
+breeds_ranked <- breed_rank_all %>% 
+  select(-links) %>% 
+  pivot_longer(
+    cols = 2:9,
+    names_pattern = 'x([0-9]{4})\\_rank',
+    values_to = 'rank',
+    names_to = 'year'
+   ) %>% 
+  filter(!is.na(rank)) %>%
+  left_join(breed_traits) %>% 
+  mutate(
+    trait = if_else(
+      trait == 'Good With Other Dogs', 'Playing With Other Dogs', trait
+    )
+  )
+
+avgs <- breeds_ranked %>% 
+  filter(rank <= 5) %>% 
+  group_by(year, trait) %>% 
+  summarise(avg = mean(rating), .groups = 'drop')
+
+descriptions <- breed_traits %>% 
+  left_join(trait_description, by = 'trait') %>% 
+  mutate(
+    trait = if_else(
+      trait == 'Good With Other Dogs', 'Playing With Other Dogs', trait
+    )
+  )
+
+
+trait_changes <- avgs %>% 
+  filter(year %in% c('2013', '2020')) %>% 
+  pivot_wider(
+    id_cols = trait,
+    names_from = year,
+    values_from = avg
+  ) %>% 
+  janitor::clean_names() %>% 
+  mutate(change = (x2013 > x2020)) %>% 
+  filter(abs(x2020 - x2013) > .15)
+```
+
+```{r}
+label_col <- 'black'
+label_size <- 7
+bounds_col <- 'grey70'
+bounds_size <- 6
+text_family <- 'firasans'
+arrow_size <- 0.75
+arrow_pointsize <- 0.25
+annotation_size <- 5
+
+p <- trait_changes %>% 
+  ggplot(aes(y = trait, yend = trait)) +
+  geom_segment(
+    aes(x = x2013, xend = x2020, col = change),
+    arrow = arrow(length = unit(arrow_pointsize, 'cm')),
+    size = arrow_size,
+    lineend = 'round',
+    linejoin = 'mitre'
+  ) +
+  scale_color_manual(values = rev(thematic::okabe_ito(2))) +
+  scale_x_continuous(breaks = 1:5) +
+  coord_cartesian(xlim = c(-0.75, 6.5), ylim = c(0.5, 12.5), expand = F) +
+  geom_text(
+    data = descriptions %>% filter(trait %in% trait_changes$trait),
+    aes(label = trait_1, x = 1), hjust = 0, nudge_x = 0.05,
+    col = bounds_col,
+    family = text_family,
+    size = bounds_size
+  ) +
+  geom_text(
+    data = descriptions %>% filter(trait %in% trait_changes$trait),
+    aes(label = trait_5, x = 5), hjust = 0, nudge_x = 0.05,
+    col = bounds_col,
+    family = text_family,
+    size = bounds_size
+  ) + 
+  geom_text(
+    data = descriptions %>% filter(trait %in% trait_changes$trait),
+    aes(label = trait, x = 1), hjust = 1, nudge_x = -0.05,
+    family = text_family,
+    size = label_size
+  ) + 
+  annotate(
+    'curve',
+    x = 2.1, 
+    xend = 3,
+    y = 5.1, 
+    yend = 4.3,
+    linetype = 2,
+    curvature = -0.4,
+    alpha = 0.25
+  ) +
+  annotate(
+    'curve',
+    x = 2.25, 
+    xend = 3,
+    y = 2.9, 
+    yend = 3.8,
+    linetype = 2,
+    curvature = 0.4,
+    alpha = 0.25
+  ) +
+  annotate(
+    'text',
+    x = 3.025,
+    y = 4,
+    hjust = 0,
+    vjust = 0.5,
+    label = 'Drooling became more \ntolerable in 2020 but \nbarking is less accepted',
+    family = text_family,
+    alpha = 0.5,
+    size = annotation_size,
+    lineheight = 0.5
+  ) +
+  geom_vline(xintercept = 1, linetype = 2) +
+  geom_vline(xintercept = 5, linetype = 2) +
+  theme_light() +
+  theme(
+    legend.position = 'none',
+    panel.grid.major.y = element_line(linetype = 3),
+    panel.grid.major.x = element_line(linetype = 3),
+    panel.grid.minor.x = element_blank(),
+    axis.text.y = element_blank(), 
+    axis.ticks = element_blank(),
+    text = element_text(size = 24, family = text_family)
+  ) +
+  labs(
+    x = element_blank(), 
+    y = element_blank(),
+    title = 'What Do Modern Dog Owners Want?',
+    subtitle = 'A comparison of the average trait ratings of the five most popular breeds in 2013 and 2020',
+    caption = 'TidyTuesday 2022 - Week 5 | Data: American Kennel Club | Graphic: Albert Rapp, @rappa753'
+  )
+
+#p
+ggsave('2022-w05-dogs/dogs.png', p, height = 20 * 9 / 16, width = 20, unit = 'cm')
+```
+
+
