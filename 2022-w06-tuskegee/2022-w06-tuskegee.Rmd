@@ -1,0 +1,77 @@
+---
+title: "2022-w05-tuskee"
+author: "Albert Rapp"
+date: "8 2 2022"
+output: html_document
+---
+
+
+Read data
+
+```{r}
+library(tidyverse)
+airmen <-  readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-02-08/airmen.csv') %>% 
+  janitor::clean_names()
+```
+
+
+```{r}
+hometown_counts <- airmen %>% 
+  filter(!is.na(military_hometown_of_record)) %>% 
+  mutate(military_hometown_of_record = if_else(
+    military_hometown_of_record %in% c("Brooklyn", "Bronx", "Jamaica", "Corona"),
+    "New York",
+    military_hometown_of_record
+  )) %>% 
+  count(military_hometown_of_record, state, sort = T) %>% 
+  mutate(percent = n / sum(n), cumsum = cumsum(percent)) %>% 
+  filter(cumsum <= 0.5) %>% 
+  rename(name = military_hometown_of_record) %>% 
+  mutate(
+    name = tolower(name),
+    name = case_when(
+      name == "pittsburg" ~ "pittsburgh",
+      name == "st. louis" ~ "saint louis",
+      name == "williams afb" ~ "phoenix", 
+      name == "cincinnatti" ~ "cincinnati", 
+      T ~ name
+    )
+  )
+
+cities <- maps::us.cities %>% 
+  mutate(name = str_remove(name, paste0(" ", country.etc))) %>% 
+  rename(state = country.etc) %>% 
+  as_tibble() %>% 
+  mutate(name = tolower(name))
+
+counts <- hometown_counts %>% 
+  left_join(cities) %>% 
+  mutate(
+    long = if_else(str_detect(name, "tuskegee"), -85.706667, long),
+    lat = if_else(str_detect(name, "tuskegee"), 32.431389, lat)
+  ) %>% 
+  select(-c(pop, capital)) 
+```
+
+```{r}
+library(sf)
+library(extrafont)
+states <- st_as_sf(maps::map("state", plot = FALSE, fill = TRUE))
+
+counts %>% 
+  ggplot() +
+  geom_sf(data = states) +
+  geom_point(aes(long, lat, size = n), col = "firebrick2") +
+  theme_void() +
+  theme(text = element_text(family = 'Garamond', size = 18)) +
+  labs(
+    size = element_blank(), 
+    title = 'Where Do Tuskegee Airmen Frequently Come From?',
+    subtitle = 'Based on the 50% most common home town records',
+    caption = 'TidyTuesday 2022 - Week 6 | Data: CAF | A quick one-hour vizualization by Albert Rapp, @rappa753'
+  ) %>% 
+  ggsave(
+    
+  )
+```
+
