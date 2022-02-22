@@ -1,0 +1,176 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+setwd(here::here('2022-w08-freedom'))
+library(tidyverse)
+library(ggforce)
+library(patchwork)
+library(showtext)
+library(ggtext)
+font_add_google("Fira Sans", "firasans")
+showtext_auto()
+
+freedom <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-02-22/freedom.csv') %>% 
+  janitor::clean_names()
+```
+
+
+```{r}
+comparison_status <- freedom %>% 
+  filter(year %in% c(2000, 2020)) %>%
+  select(country, status, year) %>% 
+  pivot_wider(
+    id_cols = country, 
+    names_from = 'year', 
+    names_prefix = 'status_',
+    values_from = status
+  ) 
+
+changed <- comparison_status %>% 
+  #filter(status_2000 != status_2020) %>% 
+  mutate(
+    change = case_when(
+      status_2000 == 'NF' & status_2020 == 'PF' ~ 'improved',
+      status_2000 == 'PF' & status_2020 == 'F' ~ 'improved',
+      status_2000 == 'F' & status_2020 == 'PF' ~ 'declined',
+      status_2000 == 'PF' & status_2020 == 'NF' ~ 'declined',
+      T ~ 'same'
+    )
+  ) %>% 
+  left_join(freedom %>% filter(year == 2000) %>% select(country, region_name)) %>% 
+  filter(!is.na(status_2000))
+```
+
+```{r}
+dat <- changed %>% 
+  count(status_2000, status_2020, region_name, change) %>% 
+  gather_set_data(x = 1:3) %>% 
+  mutate(y = case_when(
+    y == 'F' ~ 'Free',
+    y == 'PF' ~ 'Partial',
+    y == 'NF' ~ 'Not free',
+   # y == 'Oceania' ~ '',
+    y == 'Americas' ~ 'Amer.',
+    T ~ y
+  ))
+
+## Font
+text_family <- 'firasans'
+
+## Colors
+box_colors <- '#333333'
+void_color <- 'grey70'
+year_color <- 'grey80'
+title_color <- 'black'
+subtitle_color <- 'black'
+imp_color <- thematic::okabe_ito(8)[2]
+dec_color <- thematic::okabe_ito(8)[4]
+
+## widths
+freedom_width <- 0.10
+region_width <- 0.3
+widths <- c(rep(freedom_width, 3), rep(region_width,5), rep(freedom_width, 3))
+
+## Sizes
+label_size <- 5
+year_size <- 9
+
+## alphas
+void_alpha <- 0.25
+year_alpha <- 0.3
+
+p_base <- dat %>% 
+  ggplot(aes(
+    x = factor(x, c('status_2000', 'region_name', 'status_2020')), 
+    split = fct_reorder(y, n, sum, .desc = T), 
+    id = id, 
+    value = n
+  )) +
+  geom_parallel_sets(aes(fill = change, alpha = change)) +
+  geom_parallel_sets_axes(axis.width = widths, col = box_colors) +
+  geom_parallel_sets_labels(
+    colour = 'white', 
+    family = text_family,
+    size = label_size,
+    angle = c(rep(-90, 3), rep(0, 5), rep(-90, 3))
+  ) +
+  annotate(
+    'text',
+    x = 1 - freedom_width / 2, 
+    y = 230,
+    size = year_size,
+    label = "2000",
+    family = text_family,
+    hjust = 0,
+    fontface = 'bold',
+    col = box_colors,
+    alpha = year_alpha
+  ) +
+  annotate(
+    'text',
+    x = 3 + freedom_width / 2, 
+    y = 230,
+    size = year_size,
+    label = "2020",
+    family = text_family,
+    hjust = 1,
+    fontface = 'bold',
+    col = box_colors,
+    alpha = year_alpha
+  ) +
+  theme_void() +
+  coord_cartesian(expand = F, xlim = c(0.8, 3.2), ylim = c(-20, 240))
+
+p_imp <- p_base +
+  scale_fill_manual(values = c(void_color, imp_color, void_color)) +
+  scale_alpha_manual(values = c(void_alpha, 1, void_alpha)) 
+
+p_dec <- p_base +
+  scale_fill_manual(values = c(dec_color, rep(void_color , 2))) +
+  scale_alpha_manual(values = c(1, void_alpha, void_alpha))
+
+title_text <- "Same thing, different decade."
+subtitle_text <- glue::glue("While the freedom status rating <span style = 'color:{imp_color};'>**improved**</span> for 15 countries since 2000, it <br><span style = 'color:{dec_color};'>**deteriorated**</span> for 22 others. Most ratings <span style = 'color:{void_color};'>**stayed the same**</span> though.")
+caption_text <- 'TidyTuesday 2022 - Week 8 | Data: Freedom House & UN | Graphic: Albert Rapp, @rappa753'
+
+p <- p_imp + p_dec & theme(
+  text = element_text(family = text_family),
+  plot.title.position = 'plot',
+  plot.title = element_markdown(
+    size = 32,
+    face = 'bold', 
+    colour = title_color,
+    margin = margin(t = 2, r = 0, b = 2, l = 0, unit = "mm")
+  ),
+  plot.subtitle = element_markdown(
+    size = 20,
+    face = 'italic', 
+    colour = subtitle_color,
+    margin = margin(t = 0, r = 0, b = 3, l = 0, unit = "mm"),
+    lineheight = 0.5
+  ),
+  plot.caption = element_markdown(size = 16),
+  legend.position = 'none'
+) & plot_annotation(
+  title = title_text,
+  subtitle = subtitle_text,
+  caption = caption_text
+)
+ggsave(
+  '2022_w08_freedom.png', 
+  p, 
+  width = 10, 
+  height = 10 * 9 / 16, 
+  unit = 'cm',
+  dpi = 300,
+  scale = 1
+)
+
+```
+
