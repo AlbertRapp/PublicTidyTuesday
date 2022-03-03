@@ -302,7 +302,7 @@ p2 <- states %>%
     'richtext',
     x = -125,
     y = 62,
-    label = '**Which US region have the most renewable<br>energy fuel stations?**',
+    label = '**Which US region has the most renewable<br>energy fuel stations?**',
     hjust = 0, 
     vjust = 0, 
     size = 6, 
@@ -310,14 +310,7 @@ p2 <- states %>%
   ) +
   scale_fill_identity() +
   coord_sf(xlim = c(-125, -60), ylim = c(0, 67)) +
-  theme_void() + 
-  # labs(
-  #   title = 'Which US region have the most renewable energy fuel stations?',
-  #   subtitle = str_c(c(pacific_state_text, midatlantic_state_text), collapse = '<br>')
-  # ) +
-  theme(
-    plot.subtitle = element_markdown()
-  )
+  theme_void() 
 
 ggsave(
   'map.png', 
