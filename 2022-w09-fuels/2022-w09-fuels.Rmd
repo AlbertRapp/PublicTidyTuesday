@@ -1,0 +1,350 @@
+---
+title: "2022-w09-fuels"
+author: "Albert Rapp"
+date: "1 3 2022"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(geomtextpath)
+library(ggtext)
+library(patchwork)
+library(sf)
+
+setwd(here::here('2022-w09-fuels'))
+stations <- readr::read_csv('stations.csv') %>% 
+  janitor::clean_names()
+```
+
+
+Webscrape table with US states abbreviations from Wikipedia
+
+```{r}
+state_abbrevs <- rvest::read_html('https://en.wikipedia.org/wiki/List_of_U.S._state_and_territory_abbreviations') %>% 
+  rvest::html_table() %>% 
+  .[[1]] %>% 
+  slice(-(1:12)) %>% 
+  select(state_full = 1, state = 6)
+```
+
+Webscrape table with US states sizes from Wikipedia
+
+```{r}
+state_sizes <- rvest::read_html('https://en.wikipedia.org/wiki/List_of_U.S._states_and_territories_by_area') %>% 
+  rvest::html_table() %>% 
+  .[[1]] %>% 
+  select(state_full = 1, total_area_sqmi = 3) %>% 
+  slice(-1) %>% 
+  mutate(
+    total_area_sqmi = parse_number(total_area_sqmi)
+  ) %>% 
+  left_join(state_abbrevs) %>% 
+  filter(!is.na(state))
+```
+
+Webscrape table with US states inhabitans from Wikipedia
+
+```{r}
+state_pops <- rvest::read_html('https://en.wikipedia.org/wiki/List_of_U.S._states_and_territories_by_population') %>% 
+  rvest::html_table() %>% 
+  .[[1]] %>% 
+  select(state_full = 3, census_2020 = 4) %>% 
+  slice(-1) %>% 
+  mutate(census_2020 = parse_number(census_2020)) %>% 
+  left_join(state_abbrevs) %>% 
+  filter(!is.na(state))
+```
+
+Join with a csv-file that I already have with data from
+https://en.wikipedia.org/wiki/List_of_regions_of_the_United_States#Census_Bureau-designated_regions_and_divisions
+
+```{r}
+splitting_regex <- "(,\\s){1}(and\\s)?"
+splitting_regex2 <- "((\\.|;)\\s){1}(and\\s)?"
+split_states <- function(str) {
+  if (str_detect(str, "D.C.")) {
+    split_regex <- splitting_regex2
+  } else {
+    split_regex <- splitting_regex
+  }
+  str %>% str_split(split_regex) %>% unlist()
+}
+
+# Copied text from Wikipedia into a csv file and split it using regexes
+regions <- read_csv2("2021_w41_region_states.csv", col_names = F) %>% 
+  rename(region_label = X1, region = X2, state_full = X3) %>% 
+  mutate(state_full = map(state_full, split_states)) %>% 
+  unnest(state_full) %>% 
+  mutate(state_full = if_else(state_full == "Washington, D.C", "District of Columbia", state_full))
+
+regions <- left_join(regions, state_abbrevs) 
+```
+
+```{r}
+counts_regions <- stations %>% 
+  left_join(regions) %>% 
+  filter(!is.na(region)) %>% 
+  count(region_label, region)
+
+region_pops <- state_pops %>% 
+  left_join(regions) %>% 
+  group_by(region_label, region) %>% 
+  summarise(census_2020 = sum(census_2020), .groups = 'drop') %>% 
+  filter(!is.na(region))
+
+region_sizes <- state_sizes %>% 
+  left_join(regions) %>% 
+  group_by(region_label, region) %>% 
+  summarise(total_area_sqmi = sum(total_area_sqmi), .groups = 'drop') %>% 
+  filter(!is.na(region))
+
+ranks <- counts_regions %>% 
+  left_join(region_pops) %>% 
+  left_join(region_sizes) %>% 
+  mutate(
+    n_per_sqmi = n / total_area_sqmi, 
+    n_per_inhab = n / census_2020,
+    rank_count = 10 - row_number(n),
+    rank_size = 10 - row_number(n_per_sqmi),
+    rank_inhab = 10 - row_number(n_per_inhab)
+  ) %>% 
+  select(region_label, region, rank_count:rank_inhab) %>% 
+  pivot_longer(
+    cols = 3:5,
+    names_prefix = 'rank_',
+    names_to = 'type',
+    values_to = 'rank'
+  )
+```
+
+```{r}
+# radii
+r_factor <- 1
+r_points <- r_factor * 1
+r_text <- r_factor * 1.1
+r_ranking <- r_factor * 1.11
+
+# sizes
+point_size <- 10
+point_stroke <- 1
+ranking_text_size <- 10
+region_label_size <- 4.5
+rank_label_size <- 6
+point_spread_margin <- 0.25
+
+# colors
+nonhighlight_col <- '#b3b3b3'
+highlight_colors <- thematic::okabe_ito(8)
+
+# font
+font_family <- 'firasans'
+
+## Coordinated
+phis <- c(
+  seq(0-point_spread_margin, 2 * pi / 6 + point_spread_margin, length.out = 9),
+  seq(-point_spread_margin + 2* 2 * pi / 6, 3* 2 * pi  / 6 + point_spread_margin, length.out = 9),
+  seq(-point_spread_margin + 4* 2 * pi  / 6, 5* 2 * pi  / 6 + point_spread_margin, length.out = 9)
+)
+
+points_coords <- tibble(
+  phi = phis,
+  x = r_points * cos(phi),
+  y = r_points * sin(phi),
+  rank = c(9:1, 9:1, 1:9)
+) %>% 
+  mutate(type = c(rep('size', 9), rep('count', 9), rep('inhab', 9))) %>% 
+  left_join(ranks) %>% 
+  mutate(col = case_when(
+    region_label == 'II' ~ highlight_colors[2],
+    region_label == 'IX' ~ highlight_colors[3],
+    T ~nonhighlight_col
+  ))
+
+text_coords <- tibble(
+  phi = phis,
+  x = r_text * cos(phi),
+  y = r_text * sin(phi),
+  label = c(
+    rep('Ranking by Size', 9), rep('Ranking by Counts', 9), rep('Ranking by Inhabitants', 9))
+) 
+ranking_coords <- tibble(
+  phi = phis,
+  x = r_ranking * cos(phi),
+  y = r_ranking * sin(phi),
+  label = c(9:1, 9:1, 1:9)
+)  
+
+# Plot
+p <- points_coords %>% 
+  ggplot(aes(x, y)) +
+  geom_polygon(
+    data = points_coords %>% filter(col == nonhighlight_col),
+    aes(group = region, col = col), fill = NA
+  ) +
+  geom_polygon(
+    data = points_coords %>% filter(col != nonhighlight_col),
+    aes(group = region, col = col), fill = NA,
+    size = 1
+  ) +
+  geom_point(
+    aes(col = col),
+    size = point_size, 
+    shape = 21, 
+    fill = 'white', 
+    stroke = point_stroke,
+  ) + 
+  geom_textpath(
+    data = text_coords, 
+    aes(label = label), 
+    size = ranking_text_size, 
+    vjust = 2, 
+    text_only = TRUE,
+    col = nonhighlight_col
+  ) +
+  geom_text(
+    data = ranking_coords, aes(label = label), 
+    vjust = c(rep(0, 9), rep(0, 9), rep(1, 9)),
+    hjust = c(rep(0, 9), rep(1, 9), rep(0.5, 9)),
+    size = rank_label_size,
+    col = nonhighlight_col
+  ) +
+  geom_text(
+    data = points_coords, aes(label = region_label, col = col), 
+    vjust = 0.5,
+    hjust = 0.5,
+    size = region_label_size
+  ) +
+  coord_equal(xlim = c(-1.5 * r_factor, 1.5* r_factor), ylim = c(-1.5* r_factor, 1.5* r_factor)) +
+  scale_color_identity() +
+  theme_void() +
+  theme(legend.position = 'none')
+
+ggsave(
+  'rankings.png', 
+  p, 
+  device = ragg::agg_png, 
+  dpi = 300, 
+  width = 30, 
+  height = 30 * 9 / 16,
+  unit = 'cm',
+)
+#shell('rankings.png', wait = F)
+```
+
+
+
+
+
+```{r}
+states <- st_as_sf(maps::map("state", plot = FALSE, fill = TRUE)) %>% 
+  as_tibble() %>% 
+  mutate(
+    state_full = str_to_title(ID), 
+    state_full = if_else(
+      state_full == 'District Of Columbia', 
+      'District of Columbia', 
+      state_full
+    )
+  ) %>% 
+  left_join(regions) %>% 
+  mutate(region = glue::glue('({region_label}) {region}')) %>% 
+  mutate(
+    fill = case_when(
+      region_label == 'II' ~ highlight_colors[2],
+      region_label == 'IX' ~ highlight_colors[3],
+      T ~ nonhighlight_col
+    ))
+
+texts <- states %>% 
+  group_by(region) %>% 
+  summarise(states = str_c(state_full, collapse = ', ')) %>% 
+  mutate(
+    label = glue::glue('**{region}<br>** {states}'),
+    label = case_when(
+      str_detect(region, '\\(II\\)') ~ glue::glue("<span style = 'color:{highlight_colors[2]};'>{label}</span>"), 
+      str_detect(region, '\\(IX\\)') ~ glue::glue("<span style = 'color:{highlight_colors[3]};'>{label}</span>"),
+      T ~ glue::glue("<span style = 'color:	#666666;'>{label}</span>")
+    )
+  ) %>% 
+  slice(1:4, 6:8, 5) %>% 
+  pull(label) %>% 
+  str_c(collapse = '<br>')
+
+pacific_state_text <-  glue::glue("The <span style = 'color:{highlight_colors[3]};'>**Pacific states**</span> have the most fuel stations but relative to their size<br>they only place fouth.")
+
+midatlantic_state_text <-  glue::glue("Relative to their size, the <span style = 'color:{highlight_colors[2]};'>**Mid-Atlantic states**</span> have the second most fuel<br>stations but relative to their number of inhabitants they only rank<br>at the sixth place.")
+
+p2 <- states %>% 
+  ggplot() +
+  geom_sf(aes(geometry = geom, fill = fill), col = 'black') +
+  annotate(
+    'richtext',
+    x = -125,
+    y = 25,
+    label = texts,
+    hjust = 0, 
+    vjust = 1, 
+    size = 2.5, 
+    label.colour = NA
+  ) +
+  annotate(
+    'richtext',
+    x = -125,
+    y = 50,
+    label = str_c(c(pacific_state_text, midatlantic_state_text), collapse = '<br>'),
+    hjust = 0, 
+    vjust = 0, 
+    size = 4, 
+    label.colour = NA
+  ) +
+  annotate(
+    'richtext',
+    x = -125,
+    y = 62,
+    label = '**Which US region have the most renewable<br>energy fuel stations?**',
+    hjust = 0, 
+    vjust = 0, 
+    size = 6, 
+    label.colour = NA
+  ) +
+  scale_fill_identity() +
+  coord_sf(xlim = c(-125, -60), ylim = c(0, 67)) +
+  theme_void() + 
+  # labs(
+  #   title = 'Which US region have the most renewable energy fuel stations?',
+  #   subtitle = str_c(c(pacific_state_text, midatlantic_state_text), collapse = '<br>')
+  # ) +
+  theme(
+    plot.subtitle = element_markdown()
+  )
+
+ggsave(
+  'map.png', 
+  p2, 
+  device = ragg::agg_png, 
+  dpi = 300, 
+  width = 30, 
+  height = 30 * 9 / 16,
+  unit = 'cm',
+)
+#shell('map.png', wait = F)
+```
+
+```{r}
+caption_text <- 'TidyTuesday 2022 - Week 9 | Data: US DOT & Wikipedia | Graphic: Albert Rapp, @rappa753'
+p_complete <- p2 + p + 
+  plot_annotation(caption = caption_text)
+
+ggsave(
+  'combined.png', 
+  p_complete, 
+  device = ragg::agg_png, 
+  dpi = 300, 
+  width = 30, 
+  height = 30 * 9 / 16,
+  unit = 'cm',
+)
+#shell('combined.png', wait = F)
+```
+
