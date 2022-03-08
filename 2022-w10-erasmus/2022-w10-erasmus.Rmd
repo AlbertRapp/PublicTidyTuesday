@@ -1,0 +1,122 @@
+---
+title: "2022-w10-erasmus"
+author: "Albert Rapp"
+date: "8 3 2022"
+output: html_document
+---
+
+
+```{r}
+setwd(here::here('2022-w10-erasmus'))
+erasmus <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-03-08/erasmus.csv')
+#camcorder::gg_record(dir = 'img', width = 15 , height = 7.5 , units = 'cm', dpi = 400)
+library(tidyverse)
+library(ggtext)
+library(patchwork)
+library(showtext)
+
+font_add_google('Fira Sans', 'textfont')
+font_add_google('Anton', 'titlefont')
+showtext_auto()
+showtext_opts(dpi = 400)
+```
+
+```{r}
+colors <- thematic::okabe_ito(4)[-1]
+text_tib <- erasmus %>% 
+  filter(between(participant_age, 6, 60)) %>% 
+  count(
+    age = case_when(
+      participant_age < 20 ~ 'younger than 20.',
+      between(participant_age, 20, 29) ~ '20 - 29 years old.',
+      participant_age >= 30 ~ 'aged 30+.'
+    ), 
+  sort = T) %>% 
+  mutate(
+    age = glue::glue("<span style = 'color:{colors};'>**{age}**</span>"),
+    prop = n / sum(n),
+    percent_label = scales::percent(prop, accuracy = 0.1),
+    text_label = paste('of the ERASMUS students<br>were', age, sep = ' ')
+  )
+```
+
+```{r}
+img <- png::readPNG('Flag_of_Europe.png', native = T)
+scale_text <- 0.6
+percent_size <- 20 * scale_text
+text_size <- 8 * scale_text
+
+background_color <- 'lightblue'
+y_low <- 0.7
+x_min <- 0.25
+x_max <- 4
+y_scale <- seq(3, y_low + 0.4, length.out = 3)
+text_family <- 'textfont'
+info_color <- 'grey40'
+
+description <- "Erasmus students are those that take advantage of the Erasmus exchange program, a well supported and organised scheme that has been in operation since the late 1980's. It allows for students to study at universities in the EU member states for set periods of time. Erasmus students study a wide variety of subjects but most use the program for advancing their language skills with a view to working in the international sphere, and it is advised that anyone interested seeks information on the Erasmus scheme online."
+caption_text <- 'TidyTuesday 2022 - Week 10 | Data: Data.Europa.eu | Graphic: Albert Rapp, @rappa753'
+
+p <- text_tib %>% 
+  ggplot() +
+  geom_richtext(
+    aes(x = 1, y = y_scale, label = text_label),
+    hjust = 0,
+    vjust = 1,
+    label.colour = NA,
+    size = text_size,
+    fill = NA,
+    family = text_family
+  ) +
+  geom_richtext(
+    aes(x = 1, y = y_scale, label = percent_label),
+    hjust = 1,
+    vjust = 1,
+    label.colour = NA,
+    size = percent_size, 
+    fill = NA,
+    family = text_family,
+    colour = colors
+  ) +
+  geom_textbox(
+    x = x_max * 1.0075,
+    y = y_low * 0.5,
+    hjust = 1,
+    vjust = 0,
+    valign = 1,
+    halign = 0,
+    box.colour = NA,
+    label = description,
+    size = 2.5, 
+    fill = NA,
+    width = unit(4.8, 'cm'),
+    family = text_family, 
+    lineheight = 1.25,
+    col = info_color
+  ) +
+  coord_cartesian(xlim = c(x_min, x_max), ylim = c(y_low, 3), clip = 'off') +
+  theme_void() +
+  inset_element(img, left = 0.52, right = 1, top = 1.1, bottom = 0.734, on_top = F) +
+  plot_annotation(
+    title = 'ERASMUS - An Exchange Program for All Ages',
+    caption = caption_text
+  ) &
+  theme(
+    plot.background = element_rect(fill = background_color, colour = NA),
+    text = element_text(family = 'titlefont', size = 12),
+    plot.caption = element_text(family = text_family, size = 5, hjust = 0, color = info_color),
+  ) 
+p
+```
+
+
+```{r}
+scaling <- 0.5
+ggsave(
+  'erasmus.png',
+  p,
+  width = 15 * scaling, height = 7.5 * scaling, units = 'cm', dpi = 400, scale = 1 / scaling,
+  device = ragg::agg_png
+)
+```
+
