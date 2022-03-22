@@ -1,0 +1,98 @@
+---
+title: "2022-w12-babynames"
+author: "Albert Rapp"
+date: "22 3 2022"
+output: html_document
+---
+
+```{r}
+setwd(here::here('2022-w12-babynames'))
+babynames <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-03-22/babynames.csv')
+library(tidyverse)
+library(ggtext)
+library(showtext)
+
+camcorder::gg_record(dir = 'img', width = 10 , height = 12 , units = 'cm', dpi = 300)
+showtext_auto()
+showtext_opts(dpi = 300)
+
+font_add_google('Montserrat', 'Montserrat')
+font_add_google('Merriweather', 'Merriweather')
+```
+
+
+```{r}
+majority_tbl <- babynames %>% 
+  group_by(decade =  (year %/% 10) * 10, sex) %>% 
+  summarise(n = sum(n), .groups = 'drop') %>% 
+  pivot_wider(names_from = sex, values_from = n) %>% 
+  mutate(more_men = M > `F`) %>% 
+  select(decade, more_men)
+  
+
+decade_names <- babynames %>% 
+  group_by(decade =  (year %/% 10) * 10, sex, name) %>% 
+  summarise(n = sum(n), .groups = 'drop_last') %>% 
+  slice_max(n, n = 1, with_ties = F) %>% 
+  ungroup() %>% 
+  left_join(majority_tbl) %>% 
+  filter((sex == 'F' & !more_men) | (sex == 'M' & more_men)) %>% 
+  bind_rows(
+    tibble(decade = c(1870, 2020))
+  ) %>% 
+  arrange(decade)
+
+empty_string <- str_c(rep(' ', 2), collapse = '')
+decade_names <- decade_names  %>% 
+  mutate(
+    dec_lbl = glue::glue("<span style = 'font-size:10pt'>{decade}</span>"),
+    angle = 90 - 360 * (seq_along(decade) - 0.5) / nrow(decade_names),
+    label = if_else(
+      is.na(more_men), 
+      '', 
+      if_else(
+        angle < -90, 
+        str_c(if_else(decade %in% c(1880, 2010), as.character(dec_lbl), ''), empty_string, name), 
+        str_c(name, empty_string, if_else(decade %in% c(1880, 2010), as.character(dec_lbl), ''))
+      )
+    ),
+    hjust = if_else(angle < -90, 1, 0),
+    angle = if_else(angle < -90, angle + 180, angle),
+    
+  ) 
+```
+
+
+```{r}
+caption_text <- 'TidyTuesday 2022 - Week 12 | Data: babynames R Package\nGraphic: Albert Rapp, @rappa753'
+decade_names %>% 
+  ggplot(aes(decade, col = more_men, angle = angle, hjust = hjust)) +
+  geom_richtext(aes(y = 100, label = label), size = 7, label.colour = NA, family = 'Merriweather') +
+  geom_rect(aes(xmin = 1870, xmax = 2020, ymin = 0, ymax = 90), col = NA, fill = '#A2C5AC') +
+  annotate(
+    'richtext',
+    x = 2000, y = 0,
+    label = "Name <span style = 'font-size:11pt'>of the</span><br>Decade<br><span style = 'font-size:8pt'>by most frequent gender</span>",
+    col = 'white',
+    label.colour = NA,
+    fill = NA,
+    size = 7,
+    lineheight = 0.25,
+    family = 'Montserrat'
+  ) +
+  coord_polar() +
+  scale_x_continuous() +
+  scale_y_continuous(limits = c(0, 180)) +
+  scale_color_manual(values = c('#8A7090', '#0B4F6C')) +
+  labs(
+    caption = caption_text
+  )+
+  theme_void() +
+  theme(
+    legend.position = 'none', 
+    plot.margin = margin(),
+    text = element_text(family = 'Merriweather', size = 8)
+  
+  )
+```
+
