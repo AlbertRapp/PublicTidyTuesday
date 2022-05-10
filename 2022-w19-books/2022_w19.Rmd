@@ -1,0 +1,116 @@
+---
+title: "2022_w19"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Read data plus packages and start camcorder
+
+```{r}
+
+nyt_titles <- readr::read_tsv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-05-10/nyt_titles.tsv')
+nyt_full <- readr::read_tsv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-05-10/nyt_full.tsv')
+
+library(tidyverse)
+library(ggtext)
+library(patchwork)
+library(showtext)
+showtext_auto()
+showtext_opts(dpi = 300)
+font_add_google('Oxygen', 'general_text')
+
+camcorder::gg_record(
+  dir = 'img',
+  width = 3 * 16,
+  height = 3 * 9,
+  unit = 'cm',
+  dpi = 300
+)
+```
+
+
+```{r}
+find_first_appearance <- function(dat, title_id) {
+  first_ind <- which(dat$title_id == title_id) %>% min()
+  dat[[first_ind, 'year']]
+}
+title_id <- 6477
+nyt10_desc <- nyt_full %>% 
+  filter(rank < 10) %>% 
+  arrange(year)
+
+first_appearances <- nyt_full %>% 
+  filter(rank < 10) %>% 
+  select(title, author, title_id) %>% 
+  unique() %>% 
+  mutate(year = map_dbl(title_id, ~find_first_appearance(nyt10_desc, .)))
+
+author_5_year_counts <- first_appearances %>% 
+  filter(year < 2020) %>% 
+  mutate(year = (year %/% 5) * 5) %>% 
+  count(year, author, sort = T) %>% 
+  filter(n > 1) %>% 
+  mutate(n = case_when(
+    n == 2 ~ "2",
+    between(n, 3, 5) ~ "3 - 5",
+    between(n, 6, 9) ~ "6 - 9",
+    n >= 10 ~ "10+",
+    T ~ 'FALSE'
+  )) %>% 
+  complete(year, author, fill = list(n = '0')) %>% 
+  mutate(
+    year = factor(year), 
+    n = factor(n, levels = c('0', "2", "3 - 5", "6 - 9", '10+'))
+  ) 
+
+author_5_year_counts %>% 
+  ggplot(aes(y = year, x = author, fill = n)) +
+  geom_tile(col = 'black') +
+  coord_cartesian(expand = F, clip = 'off') +
+  scale_x_discrete(position = 'top') +
+  labs(
+    y = 'YEAR OF FIRST APPEARANCE IN NYT TOP 10', 
+    x = 'EACH COLUMN REPRESENTS ONE AUTHOR',
+    fill = 'Number of book titles in NYT Top 10',
+    title = 'It used to be rare for authors to write two or more best-selling books within a\nfive-year period. Now, it is all too common.',
+    caption = 'TidyTuesday 2022 - Week 19 | Inspiration by @a_m_mastroianni | DataViz by @rappa753'
+  ) +
+  theme_minimal() + 
+  theme(
+    axis.text.x = element_blank(),
+    axis.title.x = element_text(color = 'grey40', hjust = 0, size = 16),
+    axis.title.y = element_text(color = 'grey40', hjust = 1, size = 16),
+    axis.ticks.x = element_blank(),
+    axis.text = element_text(color = 'grey40'),
+    text = element_text(size = 16, color = 'grey40', family = 'general_text'), 
+    legend.position = c(0.115, 1.1),
+    legend.title = element_text(face = 'bold'),
+    legend.text = element_text(face = 'bold'),
+    legend.direction = 'horizontal',
+    legend.key.height = unit(1, 'cm'),
+    legend.key.width = unit(1, 'cm'),
+    plot.title.position = 'plot',
+    plot.caption = element_text(color = 'grey40'),
+    plot.title = element_text(
+      size = 36,
+      margin = margin(b = 3, unit = 'cm'),
+      face = 'bold'
+    )
+  ) +
+  guides(
+    fill = guide_legend(
+      title.position = 'top',
+      title.hjust = 0
+    )
+  ) +
+  scale_fill_manual(
+    values = c(
+      'grey95',
+      thematic::okabe_ito(4)[c(2, 3, 4, 1)]
+    )
+  )
+```
+
+
+
