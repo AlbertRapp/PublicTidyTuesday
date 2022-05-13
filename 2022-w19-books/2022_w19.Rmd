@@ -113,4 +113,129 @@ author_5_year_counts %>%
 ```
 
 
+Smaller Plot
+
+```{r}
+camcorder::gg_record(
+  dir = 'img',
+  width = 16,
+  height = 9,
+  unit = 'cm',
+  dpi = 300
+)
+```
+
+
+```{r}
+find_first_appearance <- function(dat, title_id) {
+  first_ind <- which(dat$title_id == title_id) %>% min()
+  dat[[first_ind, 'year']]
+}
+nyt10_desc <- nyt_full %>% 
+  arrange(year)
+
+first_appearances <- nyt_full %>% 
+  select(title, author, title_id) %>% 
+  unique() %>% 
+  mutate(year = map_dbl(title_id, ~find_first_appearance(nyt10_desc, .)))
+
+author_5_year_counts <- first_appearances %>% 
+  filter(between(year, 1950, 2019)) %>% 
+  mutate(year = (year %/% 5) * 5) %>% 
+  count(year, author, sort = T) %>% 
+  filter(n > 1) %>% 
+  mutate(n = case_when(
+    n == 2 ~ "2",
+    between(n, 3, 5) ~ "3 - 5",
+    between(n, 6, 9) ~ "6 - 9",
+    n >= 10 ~ "10+",
+    T ~ 'FALSE'
+  )) %>% 
+  complete(year, author, fill = list(n = '0')) %>% 
+  mutate(
+    year = factor(year), 
+    n = factor(n, levels = c('0', "2", "3 - 5", "6 - 9", '10+'))
+  )
+```
+
+
+```{r}
+five_year_probs <- author_5_year_counts %>%
+  group_by(year, n) %>% 
+  summarize(count = n()) %>% 
+  group_by(year) %>% 
+  mutate(prob = count / sum(count))
+
+color_palette <- thematic::okabe_ito(5)
+
+five_year_probs %>% 
+  complete(year, n, fill = list(prob = 0)) %>% 
+  filter(n != '0') %>% 
+  ggplot(aes(x  = year, y = n)) +
+  geom_tile(col = 'black', aes(fill = prob)) +
+  geom_text(
+    aes(label = if_else(is.na(count), 0L, count)),
+    size = 2,
+    family = 'general_text',
+    vjust = 0,
+    hjust = 1,
+    nudge_x = 0.4,
+    nudge_y = -0.4,
+    col = 'grey25'
+  ) +
+  scale_fill_gradient(
+    trans = 'sqrt',
+    low = color_palette[3],
+    high = colorspace::lighten(color_palette[1], 0.4),
+    na.value = 'grey80',
+    labels = scales::percent
+  ) +
+  scale_x_discrete(
+    breaks = seq(1930, 2010, 10),
+    position = 'top'
+  ) +
+  theme_minimal() +
+  coord_cartesian(expand = F) +
+  theme(
+    legend.position = c(0.42, 1.35),
+    axis.text = element_text(color = 'grey40'),
+    axis.title.y = element_text(hjust = 1, size = 10),
+    text = element_text(size = 11.5, color = 'grey40', family = 'general_text'), 
+    legend.title = element_text(face = 'bold', size = 8.5, vjust = 0),
+    legend.text = element_text(size = 9, hjust = 0),
+    legend.direction = 'horizontal',
+    legend.key.height = unit(1, 'cm'),
+    legend.key.width = unit(1, 'cm'),
+    plot.title.position = 'plot',
+    plot.caption = element_text(color = 'grey40', size = 8),
+    plot.title = element_text(
+      size = 13, 
+      face = 'bold',
+      margin = margin(t = 2, b = 1, unit = 'mm')
+    ),
+    plot.subtitle = element_text(
+      size = 10,
+      margin = margin(b = 1.7, unit = 'cm'),
+    ),
+  ) +
+  labs(
+    x = element_blank(),
+    y = 'BOOKS',
+    fill = 'Probability to write number of books',
+    title = 'It used to be rare for a NYT bestseller to appear multiple times in the\nbestseller list of a given five-year period. Now, it is way more common.',
+    subtitle = 'Numbers in the box represent the number of authors', 
+    caption = 'TidyTuesday 2022 - Week 19 | Inspiration by @a_m_mastroianni | DataViz by @rappa753'
+  ) + 
+  guides(
+    fill = guide_colorbar(
+      barheight = unit(0.25, 'cm'),
+      barwidth = unit(12, 'cm'),
+      title.position = 'top',
+      ticks.colour = 'black',
+      frame.colour = 'black',
+      direction = 'horizontal',
+    )
+  ) 
+
+```
 
