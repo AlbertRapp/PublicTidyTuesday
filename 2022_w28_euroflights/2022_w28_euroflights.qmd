@@ -1,0 +1,346 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Packages and Initial Data
+
+```{r}
+library(tidyverse)
+library(ggbump)
+library(patchwork)
+
+camcorder::gg_record(
+  dir = here::here('2022_w28_euroflights/img'),
+  width = 20,
+  height = 20,
+  units = 'cm',
+  dpi = 600
+)
+flights <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-07-12/flights.csv') %>% 
+  janitor::clean_names()
+
+```
+
+# Colors
+
+```{r}
+color_palette <- viridisLite::mako(8)
+description_color <- 'grey40'
+country_colors <- c(
+  'United Kingdom' = color_palette[2],
+  'Germany' = color_palette[3],
+   'Spain' = color_palette[4],
+   'France' = color_palette[5],
+   'Italy' = color_palette[6], 
+  'Türkiye' = color_palette[7]
+)
+```
+
+# Basic Bump plot
+
+## Compute data
+
+```{r}
+country_flights_by_year <- flights %>% 
+  select(year, state = state_name, flights = flt_tot_1) %>% 
+  group_by(year, state) %>% 
+  summarise(flights = sum(flights))
+
+
+country_rank_by_year <- country_flights_by_year %>% 
+  group_by(year) %>% 
+  mutate(
+    rank = row_number(desc(flights))
+  ) %>% 
+  ungroup() %>% 
+  arrange(rank, year) 
+
+max_rank <- 6
+todays_top <- country_rank_by_year %>% 
+  filter(year == 2022, rank <= max_rank) %>% 
+  pull(state)
+```
+
+## Build bump plot
+
+```{r}
+bump_chart_basic <- country_rank_by_year %>% 
+  filter(state %in% todays_top) %>% 
+  ggplot(aes(year, rank, col = state)) + 
+  geom_point(shape = '|', stroke = 6) +
+  geom_bump(size = 1) +
+  geom_text(
+    data = country_rank_by_year %>% filter(year == 2016, state %in% todays_top),
+    aes(label = state),
+    hjust = 1,
+    nudge_x = -0.1,
+    fontface = 'bold'
+  ) +
+  geom_text(
+    data = country_rank_by_year %>% filter(year == 2022, state %in% todays_top),
+    aes(label = rank),
+    hjust = 0,
+    nudge_x = 0.1,
+    size = 5,
+    fontface = 'bold'
+  ) +
+  annotate(
+    'text',
+    x = c(2016, 2022),
+    y = c(0.25, 0.25),
+    label = c(2016, 2022),
+    hjust = c(0, 1),
+    vjust = 1,
+    size = 4,
+    fontface = 'bold',
+    color = description_color
+  ) +
+  scale_y_reverse(position = 'right', breaks = seq(16, 2, -2)) +
+  scale_color_manual(values = country_colors) +
+  coord_cartesian(xlim = c(2014, 2022.5), ylim = c(6.5, 0.25), expand = F) +
+  theme_void() +
+  theme(
+    legend.position = 'none',
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    plot.background = element_rect(fill = color_palette[8], color = NA),
+    text = element_text(
+      color = description_color,
+      family = 'Merriweather'
+    ),
+    plot.subtitle = element_text(
+      margin = margin(t = 3, b = 2, unit = 'mm')
+    ),
+    plot.title = element_text(
+      face = 'bold',
+      size = 20
+    )
+  ) +
+  labs(
+    title = 'European flight ranking',
+    subtitle = 'Rank by number of incoming and outgoing flights from 2016 to 2022'
+  )
+```
+
+# Ribbon bump plot
+
+## Compute data for bars
+
+Here I have used a little bit of functional programming to compute the percentages for each year.
+This means that we have to compute lower and upper bounds for the bars (with `cumsum()`)
+
+```{r}
+bar_width <- 0.1
+others_color <- 'grey70' # Necessary to not leave out contribution of other countries
+
+compute_percentage_bounds <- function(year) {
+  country_rank_by_year %>% 
+    filter(year == !!year) %>% 
+    arrange(desc(flights)) %>% 
+    mutate(
+      percentage_flights = flights / sum(flights),
+      state = if_else(state %in% todays_top, state, 'Others')
+    ) %>% 
+    group_by(year, state) %>% 
+    summarise(
+      percentage_flights = sum(percentage_flights), 
+      rank = min(rank),
+      .groups = 'drop'
+    ) %>% 
+    arrange(desc(rank)) %>% 
+    mutate(
+      percentage_flights_lower = cumsum(c(0, percentage_flights[-7])),
+      percentage_flights_upper = cumsum(percentage_flights)
+    )
+}
+
+percentages_countries_by_year <- map_dfr(2016:2022, compute_percentage_bounds)
+```
+
+## Plot Bars
+
+```{r}
+percentage_bars_plot <- percentages_countries_by_year %>% 
+  ggplot() +
+  geom_rect(
+    aes(
+      xmin = year - bar_width, 
+      xmax = year + bar_width,
+      ymin = percentage_flights_lower,
+      ymax = percentage_flights_upper,
+      fill = state
+    ),
+    col = 'white'
+  )+
+  theme_void() +
+  theme(
+    legend.position = 'none',
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    plot.background = element_rect(fill = color_palette[8], color = NA),
+    text = element_text(
+      color = description_color,
+      family = 'Merriweather'
+    ),
+    plot.subtitle = element_text(
+      margin = margin(t = 3, unit = 'mm'),
+      lineheight = 1.25
+    ),
+    plot.title = element_text(
+      face = 'bold',
+      size = 20
+    )
+  ) +
+  labs(
+    title = 'European flight ranking',
+    subtitle = 'Rank by number of incoming and outgoing flights from 2016 to 2022.\nHeight of bars indicate percentage of total flights.'
+  ) +
+  scale_fill_manual(values = c(country_colors, 'Others' = others_color)) 
+
+percentage_bars_plot
+```
+
+## Compute Ribbons data
+
+```{r}
+n_points <- 100
+
+margin_between_ribbons <- 0.003
+compute_ribbons <- function(state) {
+  
+  state_data <- percentages_countries_by_year %>% 
+    filter(state == !!state)
+  
+  lower_bounds <- state_data %>% 
+    select(year, percentage_flights_lower) %>% 
+    mutate(
+      x_from = year + bar_width, 
+      x_to = year + 1 - bar_width,
+      y_from = percentage_flights_lower + margin_between_ribbons,
+      y_to = c(percentage_flights_lower[-1], percentage_flights_lower[7]) + margin_between_ribbons,
+      sigmoid = pmap(list(x_from, x_to, y_from, y_to), sigmoid, n = n_points, smooth = 8)
+    ) %>% 
+    filter(year < 2022) %>% 
+    unnest(sigmoid) %>% 
+    select(x, lower = y)
+  
+  upper_bounds <- state_data %>% 
+    select(year, percentage_flights_upper) %>% 
+    mutate(
+      x_from = year + bar_width, 
+      x_to = year + 1 - bar_width,
+      y_from = percentage_flights_upper - margin_between_ribbons,
+      y_to = c(percentage_flights_upper[-1], percentage_flights_upper[7]) - margin_between_ribbons,
+      sigmoid = pmap(list(x_from, x_to, y_from, y_to), sigmoid, n = n_points)
+    ) %>% 
+    filter(year < 2022) %>% 
+    unnest(sigmoid) %>% 
+    select(x, upper = y)
+  
+  left_join(lower_bounds, upper_bounds, by = 'x') %>% 
+    mutate(state = state)
+}
+
+ribbons_data <- map_dfr(todays_top, compute_ribbons)
+```
+
+## Compute mean percentage for labels of rank and country
+
+```{r}
+mean_percentages <- percentages_countries_by_year %>% 
+  group_by(state, year) %>% 
+  summarise(
+    middle_percentage = mean(c(percentage_flights_lower, percentage_flights_upper)),
+    rank = max(rank),
+    .groups = 'drop'
+  )
+```
+
+## Add ribbons to previous plot
+
+```{r}
+combined_plot <- percentage_bars_plot +
+  geom_ribbon(
+    data = ribbons_data,
+    aes(x = x, ymin = lower, ymax = upper, fill = state),
+    alpha = 0.5
+  ) +
+  annotate(
+    'text',
+    x = c(2016 - bar_width, 2022 + bar_width),
+    y = c(1.1, 1.1),
+    label = c(2016, 2022),
+    hjust = c(0, 1),
+    vjust = 1,
+    size = 4,
+    fontface = 'bold',
+    color = description_color
+  ) +
+  geom_text(
+    data = mean_percentages %>% filter(year == 2016),
+    aes(x = year - bar_width, y = middle_percentage, label = state, col = state),
+    hjust = 1,
+    nudge_x = -0.1,
+    fontface = 'bold'
+  ) +
+  geom_text(
+    data = mean_percentages %>% filter(year == 2022, state %in% todays_top),
+    aes(x = year + bar_width, y = middle_percentage, label = rank, col = state),
+    hjust = 0,
+    nudge_x = 0.1,
+    size = 5,
+    fontface = 'bold'
+  ) +
+  coord_cartesian(
+    xlim = c(2014.5, 2022.25),
+    ylim = c(0, 1.1)
+  ) +
+  scale_color_manual(values = c(country_colors, "Others" = others_color)) 
+
+combined_plot
+```
+
+## Turn order of layers so that bars are always on top
+
+```{r}
+ribbons <- combined_plot$layers[[2]] 
+rects <- combined_plot$layers[[1]]
+
+combined_plot$layers[[1]] <- ribbons 
+combined_plot$layers[[2]] <- rects
+ribbon_bump_chart <- combined_plot
+```
+
+
+# Combine both bumpcharts into one plot
+
+```{r}
+bump_chart_basic /
+  plot_spacer() /
+  ribbon_bump_chart +
+  plot_layout(heights = c(0.45, 0.02, 0.49)) +
+  plot_annotation(
+    title = 'Basic bumps vs. ribbon bump charts',
+    caption = 'TidyTuesday 2022 - Week 28 | Data: Eurocontrol | Graphic: Albert Rapp, @rappa753',
+    theme = theme(
+      plot.title = element_text(
+        size = 32,
+        color = description_color,
+        family = 'Oleo Script',
+        face = 'bold'
+      ),
+      plot.caption = element_text(
+        size = 8,
+        color = description_color,
+        family = 'Oleo Script',
+        face = 'bold'
+      )
+    )
+  ) &
+  theme(
+     plot.background = element_rect(fill = color_palette[8], color = NA)
+  )
+```
+
