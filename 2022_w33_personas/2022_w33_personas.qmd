@@ -1,0 +1,200 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+setwd(here::here('2022_w33_personalities'))
+library(tidyverse)
+library(showtext)
+library(ggimage)
+showtext_auto()
+font_add_google('Josefin Sans', 'Josefin Sans')
+showtext_opts(dpi = 1000)
+
+camcorder::gg_record(
+  dir = 'img',
+  device = 'png',
+  dpi = 1000,
+  width = 9,
+  height = 9,
+  units = 'cm'
+)
+
+characters <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-08-16/characters.csv')
+psych_stats <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-08-16/psych_stats.csv')
+myers_briggs <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-08-16/myers_briggs.csv')
+
+```
+
+
+```{r}
+bobs_psych_stats <- psych_stats |> 
+  filter(str_detect(uni_name, "Burger"))
+
+
+bobs_questions <- bobs_psych_stats |> 
+  group_by(question) |> 
+  nest()
+
+is_anchor <- function(personality) {
+  lvls <- levels(personality)
+  anchor <- lvls[1]
+  personality == anchor
+}
+
+# Rescale ratings to [-50, 50]
+bobs_questions_rescaled <- bobs_questions |> 
+  mutate(
+    question_split = str_split(question, "/"),
+    data = map2(
+      data, question_split, 
+      ~(.x |> mutate(personality = factor(personality, levels = .y)))
+    ),
+    data = map(
+      data,
+      ~(.x |> mutate(avg_rating = avg_rating - if_else(is_anchor(personality), 50, 100)))
+    )
+  ) 
+```
+
+
+```{r}
+png(tf <- tempfile(fileext = ".png"), 2000, 2000)
+par(mar = rep(0,4), yaxs="i", xaxs="i")
+plot(0, type = "n", ylim = c(0,1), xlim=c(0,1), axes=F, xlab=NA, ylab=NA)
+plotrix::draw.circle(.5,0.5,.5, col="black")
+dev.off()
+
+mask <- magick::image_read(tf)
+
+crop_images <- function(img) {
+  img <- img |> 
+    magick::image_scale("300x300")
+  rescaled_mask <- magick::image_scale(mask, as.character(magick::image_info(img)$width)) 
+  magick::image_composite(rescaled_mask, img, "minus") |> 
+    magick::image_transparent('black') 
+}
+
+character_files <- characters |> 
+  filter(str_detect(uni_name, "Burger")) |> 
+  select(id, name, image_link) |> 
+  mutate(
+    filename = paste0(str_replace(name, " ", "_"), ".png"),
+    img = map(image_link, magick::image_read),
+    round_img = map(img, crop_images)
+  ) |> 
+  select(id, name, filename, round_img)
+
+walk2(
+  character_files$round_img, 
+  character_files$filename, 
+  ~magick::image_write(.x, here::here('2022_w33_personalities', .y), density = 600)
+)
+```
+
+
+```{r}
+selected_questions_with_images <- bobs_questions_rescaled |> 
+  filter(question %in% c('chaotic/orderly', 'mischievous/well behaved')) |> 
+  select(!question_split) |> 
+  unnest(data) |> 
+  select(char_id, char_name, question, avg_rating) |> 
+  pivot_wider(names_from = question, values_from = avg_rating) |> 
+  left_join(character_files, by = c('char_id' = 'id')) 
+```
+
+
+```{r}
+axis_linetype <- 2
+axis_col <- 'white'
+arrow_col <- 'white'
+text_size <- 2.5
+text_color <- 'white'
+axis_padding <- 2.5
+text_family <- 'Josefin Sans'
+
+
+char_traits <- selected_questions_with_images |> 
+  select(3, 4) |> 
+  names() |> 
+  str_split("/") |> 
+  unlist()
+
+cat_labels <- tibble(
+  traits = char_traits,
+  x = c(axis_padding, -axis_padding, -52, -52),
+  y = c(axis_padding, axis_padding, axis_padding, -axis_padding),
+  hjust = c(0, 1, 0, 0),
+  vjust = c(0, 0, 0, 1)
+)
+
+arrow_length <- 20
+short_arrow_length <- 5
+arrow_data <- tibble(
+  x = c(axis_padding, -axis_padding, -53, -53),
+  xend = c(axis_padding + arrow_length, -axis_padding - arrow_length, -53, -53),
+  y = c(axis_padding / 2, axis_padding / 2, axis_padding / 2, -axis_padding / 2),
+  yend = c(axis_padding / 2, axis_padding / 2, axis_padding / 2 + short_arrow_length, -axis_padding / 2 - short_arrow_length),
+  arrow = 1:4
+)
+
+
+
+
+
+selected_questions_with_images |> 
+  ggplot(aes(`mischievous/well behaved`, `chaotic/orderly`)) +
+  geom_hline(yintercept = 0, linetype = axis_linetype, col = axis_col) +
+  geom_vline(xintercept = 0, linetype = axis_linetype, col = axis_col) +
+  geom_segment(
+    data = arrow_data,
+    aes(x = x, xend = xend, y = y, yend = yend, group = arrow),
+    arrow = arrow(length = unit(0.75, 'mm')),
+    col = arrow_col
+  ) +
+  geom_text(
+    data = cat_labels,
+    aes(x, y, label = traits),
+    hjust = cat_labels$hjust,
+    vjust = cat_labels$vjust,
+    size = text_size,
+    col = text_color,
+    family = text_family
+  ) +
+  geom_image(aes(image = filename), size = 0.125) +
+  coord_equal(xlim = c(-50, 50), ylim = c(-50, 50)) +
+  scale_x_continuous(breaks = NULL, expand = expansion(mult = 0.05)) +
+  scale_y_continuous(breaks = NULL, expand = expansion(mult = 0.05)) +
+  labs(
+    x = element_blank(), 
+    y = element_blank(),
+    title = "BOB'S BURGERS",
+    subtitle = 'A restaurant of chaotic and mischievous characters',
+    caption = 'TidyTuesday 2022 - Week 33\nData: Open-Source Psychometrics | Graphic: Albert Rapp, @rappa753'
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 10, family = text_family),
+    plot.title = element_text(
+      size = 12, 
+      color = "#f0262a", 
+      face = 'bold',
+      margin = margin(b = 1, unit = 'mm')
+    ),
+    plot.subtitle = element_text(size = 9, margin = margin(b = 1, unit = 'mm')),
+    plot.caption = element_text(size = 5.5, margin = margin(t = 0)),
+    panel.grid = element_blank(),
+    panel.background = element_rect(
+      fill = NA,
+      colour = axis_col
+    )
+  )
+  
+```
+
+
+Rest of picture was done in Figma (i.e. color gradient and Quotes).
+
