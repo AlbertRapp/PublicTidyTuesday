@@ -1,0 +1,340 @@
+
+
+Set working directory
+
+```{r}
+setwd(here::here('2023-w02-birds'))
+```
+
+
+
+
+Load packages and data
+
+```{r}
+library(tidyverse)
+
+feederwatch <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-01-10/PFW_2021_public.csv')
+site_data <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-01-10/PFW_count_site_data_public_2021.csv')
+```
+
+
+Clean names.
+This makes it easier to work with column names.
+
+```{r}
+feederwatch_clean <- feederwatch |> janitor::clean_names()
+site_data_clean <- site_data |> janitor::clean_names()
+```
+
+Take a look at column names and compare with data dictionary
+
+```{r}
+colnames(feederwatch_clean)
+colnames(site_data_clean)
+```
+
+
+It looks like there are many 'fed_in' variable names in the 'site_data' data set.
+Let's take a look at all of them.
+Tidyselect helpers will give us a selection.
+
+```{r}
+site_data_clean |> 
+  select(starts_with('fed'))
+```
+
+
+This looks weird.
+It's only zeroes and ones and NAs.
+Probably a true/false kind of thing.
+
+Let's bring more columns into this.
+There's `loc_id` and `proj_period_id`.
+
+```{r}
+site_data_clean |> 
+  select(loc_id, proj_period_id, starts_with('fed'))
+```
+
+
+This is starting to make sense.
+Each feeding site has a unique location and a project id that contains what looks like a year.
+Let's check how many project IDs there are.
+
+```{r}
+unique(site_data_clean$proj_period_id)
+```
+
+All project IDs contain the same prefix.
+Let's remove it and transform the character vector into an actual numeric vector.
+`parse_number()` can take care of that.
+
+```{r}
+parse_number(site_data_clean$proj_period_id)[1:10]
+```
+
+Perfect, now let's save this data set.
+
+```{r}
+sites_fed <- site_data_clean |> 
+  select(loc_id, proj_period_id, starts_with('fed')) |> 
+  mutate(year = parse_number(proj_period_id), .before = 2) |> 
+  select(-proj_period_id)
+sites_fed
+```
+
+
+Next, we're going to take care of missing values.
+Let's have a look how many missing values there are.
+
+::: panel-tabset
+
+## Using `across()`
+
+```{r}
+sites_fed |> 
+  summarise(across(.cols = everything(), .fns = ~sum(is.na(.)))) 
+```
+
+## Using for-loop
+
+```{r}
+columns <- colnames(sites_fed)
+missing_vals <- seq_along(columns)
+names(missing_vals) <- columns
+
+for (col in columns) {
+  missing_vals[col] <- sum(is.na(sites_fed[[col]])) 
+}
+missing_vals
+```
+
+:::
+
+There is missing data.
+Let's filter those that have missing data in any of the month columns.
+The fed_yr_round column can be filled by us then.
+
+::: panel-tabset
+
+## Functional programming `{purrr}`
+
+```{r}
+complete_monthly_infos <- sites_fed |> 
+  drop_na(fed_in_jan:fed_in_dec) |> 
+  mutate(across(-c(loc_id, year), as.logical)) 
+
+complete_monthly_infos$fed_yr_round <- pmap_lgl(
+  .l = complete_monthly_infos |> select(-c(loc_id, year, fed_yr_round)), 
+  .f = all
+)
+```
+
+## Using `rowSums()`
+
+```{r}
+complete_monthly_infos <- sites_fed |> 
+  drop_na(fed_in_jan:fed_in_dec) |> 
+  mutate(across(-c(loc_id, year), as.logical)) 
+
+number_of_months_fed <- complete_monthly_infos |> 
+    select(-c(loc_id, year, fed_yr_round)) |> 
+    rowSums()
+
+complete_monthly_infos$fed_yr_round <- (number_of_months_fed == 12)
+
+```
+
+:::
+
+
+Now, let us bring our data into a tidy format.
+That's what `pivot_longer()` will do for us.
+
+```{r}
+sites_fed_infos <- complete_monthly_infos |> 
+  pivot_longer(
+    cols = -c(loc_id, year),
+    names_to = 'month',
+    names_prefix = 'fed_in_',
+    values_to = 'fed'
+  )
+sites_fed_infos
+```
+
+Next, we're able to do a little bit of counting.
+
+```{r}
+fed_counts <- sites_fed_infos |> 
+  count(year, month, fed)
+fed_counts
+```
+
+Let's check how many sites there are over the years.
+
+```{r}
+sites_over_years <- fed_counts |> 
+  filter(month != 'fed_yr_round') |> 
+  group_by(year) |> 
+  summarise(n = sum(n))
+
+sites_over_years |> 
+  ggplot(aes(year, n)) + 
+  geom_line()
+```
+
+Looks like overall the number of sites increased over the years.
+This plot was just something we did for ourselves.
+No need to customize it further.
+
+Finally, let's have a look at how many sites feed all-year.
+Maybe over time more or maybe less bird sites are active every month.
+
+```{r}
+sites_fed_infos |> 
+  filter(month == 'fed_yr_round') |> 
+  ggplot(aes(x = year, fill = fed)) +
+  geom_bar(position = 'fill')
+```
+
+Alright, it looks like there is a trend that more and more bird sites are active every month.
+Let's make this viz a bit prettier.
+
+First, let's apply `theme_minimal()` and make the bars wider (plus black border).
+
+```{r}
+sites_fed_infos |> 
+  filter(month == 'fed_yr_round') |> 
+  ggplot(aes(x = year, fill = fed)) +
+  geom_bar(position = 'fill', col = 'black', width = 1) +
+  theme_minimal(base_size = 14) 
+```
+
+Second, add labels. 
+Don't forget to put your Twitter handle into the caption.
+
+```{r}
+sites_fed_infos |> 
+  filter(month == 'fed_yr_round') |> 
+  ggplot(aes(x = year, fill = fed)) +
+  geom_bar(position = 'fill', col = 'black', width = 1) +
+  theme_minimal(base_size = 14) +
+  labs(
+    x = element_blank(),
+    y = 'Share of bird sites',
+    fill = 'Feeds all-year',
+    title = 'Over the years, the share of bird sites that feed every\nmonth of the year increased',
+    caption = 'TidyTuesday 2023 - Week 02 | Viz: @rappa753'
+  ) 
+```
+
+Third, let us format the y-axis as percent.
+
+```{r}
+sites_fed_infos |> 
+  filter(month == 'fed_yr_round') |> 
+  ggplot(aes(x = year, fill = fed)) +
+  geom_bar(position = 'fill', col = 'black', width = 1) +
+  theme_minimal(base_size = 14) +
+  labs(
+    x = element_blank(),
+    y = 'Share of bird sites',
+    fill = 'Feeds all-year',
+    title = 'Over the years, the share of bird sites that feed every\nmonth of the year increased',
+    caption = 'TidyTuesday 2023 - Week 02 | Viz: @rappa753'
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) 
+```
+
+
+Fourth, let's pick better colors manually.
+
+```{r}
+sites_fed_infos |> 
+  filter(month == 'fed_yr_round') |> 
+  ggplot(aes(x = year, fill = fed)) +
+  geom_bar(position = 'fill', col = 'black', width = 1) +
+  theme_minimal(base_size = 14) +
+  labs(
+    x = element_blank(),
+    y = 'Share of bird sites',
+    fill = 'Feeds all-year',
+    title = 'Over the years, the share of bird sites that feed every\nmonth of the year increased',
+    caption = 'TidyTuesday 2023 - Week 02 | Viz: @rappa753'
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_manual(values = c('grey90', 'dodgerblue2')) 
+```
+
+Fifth, get rid of the extra spacing surrounding the bars.
+
+```{r}
+sites_fed_infos |> 
+  filter(month == 'fed_yr_round') |> 
+  ggplot(aes(x = year, fill = fed)) +
+  geom_bar(position = 'fill', col = 'black', width = 1) +
+  theme_minimal(base_size = 14) +
+  labs(
+    x = element_blank(),
+    y = 'Share of bird sites',
+    fill = 'Feeds all-year',
+    title = 'Over the years, the share of bird sites that feed every\nmonth of the year increased',
+    caption = 'TidyTuesday 2023 - Week 02 | Viz: @rappa753'
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_manual(values = c('grey90', 'dodgerblue2')) +
+  coord_cartesian(expand = FALSE)
+```
+
+Finally, move the legend and title.
+
+```{r}
+sites_fed_infos |> 
+  filter(month == 'fed_yr_round') |> 
+  ggplot(aes(x = year, fill = fed)) +
+  geom_bar(position = 'fill', col = 'black', width = 1) +
+  theme_minimal(base_size = 14) +
+  labs(
+    x = element_blank(),
+    y = 'Share of bird sites',
+    fill = 'Feeds all-year',
+    title = 'Over the years, the share of bird sites that feed every\nmonth of the year increased',
+    caption = 'TidyTuesday 2023 - Week 02 | Viz: @rappa753'
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_manual(values = c('grey90', 'dodgerblue2')) +
+  coord_cartesian(expand = FALSE) +
+  theme(
+    legend.position = 'top',
+    plot.title.position = 'plot'
+  )
+```
+
+
+There's lots more one can do with the data or the plot.
+But as a start, this is probably okay.
+
+For now, you can share your plot on Twitter using the #tidyTuesday hashtag.
+If you do, think about sharing your code as well.
+Common practices for sharing the code: A dedicated tidyTuesday repo on Github.
+Or you can just upload the code at [gist.github.com](https://gist.github.com/).
+
+If you want to learn more, then check out [https://www.rscreencasts.com/](https://www.rscreencasts.com/).
+It's a project that documents all of [David Robinson](https://www.youtube.com/@safe4democracy/videos)'s great screencasts in which he's analyzing TidyTuesday data in lightning speed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
