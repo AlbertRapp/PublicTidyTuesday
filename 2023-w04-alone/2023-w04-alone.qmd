@@ -1,0 +1,91 @@
+
+
+
+```{r}
+library(tidyverse)
+library(showtext)
+library(ggiraph)
+
+font_add_google('Fira Sans', 'firasans')
+font_add_google('Merriweather', 'merriweather')
+showtext_auto()
+
+
+survivalists <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-01-24/survivalists.csv')
+loadouts <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-01-24/loadouts.csv')
+episodes <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-01-24/episodes.csv')
+seasons <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-01-24/seasons.csv')
+
+```
+
+
+
+```{r}
+active_days <- survivalists |> 
+  filter(season == 1)  |> 
+  arrange(days_lasted) |> 
+  select(name, days_lasted, result, reason_tapped_out) |> 
+  mutate(active_days = map(days_lasted, ~(0:.))) |> 
+  unnest(active_days) |> 
+  mutate(
+    reason_tapped_out = if_else(
+      is.na(reason_tapped_out), 'None. This person won.', reason_tapped_out
+    ),
+    survived_text = paste(name, 'survived', days_lasted, 'days.\nReason for tapping out:', reason_tapped_out)
+  )
+
+subtitle <- 'In the survival TV series "Alone",  ten survival-\nists are dropped in an extremely remote\narea and must fend for themselves. They aim\nto last 100 days in the Artic winter, living off\nthe land through their survival skills,\nendurance, and mental fortitude.'
+
+girafe_obj <- active_days |> 
+  ggplot(aes(active_days, result, fill = name)) +
+  geom_tile_interactive(
+    aes(tooltip = survived_text, data_id = name),
+    col = 'white', width = 0.95, height = 0.95
+  ) +
+  annotate(
+    'text',
+    label = subtitle, 
+    color = 'grey20',
+    size = 2,
+    x=-25, 
+    y=10,
+    hjust = 0,
+    vjust = 1
+  ) +
+  coord_equal() +
+  theme_minimal(
+    base_size = 7,
+    base_family = 'firasans',
+  ) +
+  theme(
+    legend.position = 'none',
+    text = element_text(color = 'grey20'),
+    plot.title.position = 'panel',
+    plot.title = element_text(family = 'merriweather', size = 16),
+    plot.caption = element_text(hjust = 0, size = 5)
+  ) +
+  labs(
+    x = 'Days since beginning', 
+    y = element_blank(),
+    title = 'Who can last longest?',
+    caption = 'TidyTuesday 2023 - Week 04 | Data: Alone {R} package | Viz: @rappa753'
+  ) +
+  scale_y_continuous(breaks = NULL, expand = expansion()) +
+  scale_x_continuous(
+    breaks = c(0, seq(10, 60, 10)), 
+    minor_breaks = NULL,
+    limits = c(-25, 60),
+    expand = expansion(mult = c(0, 0.005))
+  ) +
+  scale_fill_viridis_d()
+
+
+girafe(
+  ggobj = girafe_obj,
+  options = list(
+    opts_hover_inv(css = "opacity:0.1;"),
+    opts_hover(css = "stroke-width:0;")
+  )
+)
+```
+
