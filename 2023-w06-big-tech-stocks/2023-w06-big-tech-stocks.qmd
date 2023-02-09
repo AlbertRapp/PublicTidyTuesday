@@ -1,0 +1,195 @@
+
+
+```{r}
+setwd(here::here('2023-w06-big-tech-stocks'))
+library(tidyverse)
+library(lubridate)
+library(gt)
+```
+
+
+
+```{r}
+big_tech_stock_prices <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-02-07/big_tech_stock_prices.csv')
+big_tech_companies <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-02-07/big_tech_companies.csv')
+
+```
+
+Join data
+
+```{r}
+stocks <- big_tech_stock_prices |> 
+  left_join(big_tech_companies) |> 
+  arrange(company, date)
+```
+
+
+
+```{r}
+covid_period <- stocks |> 
+  filter(date %in% c(make_date(2020, 1, 2), make_date(2022, 12, 29)))
+
+covid_changes <- covid_period |> 
+  group_by(stock_symbol, company) |> 
+  nest() |> 
+  mutate(
+    change_abs = map_dbl(data, \(x) (x$open[2] - x$open[1])),
+    change_rel = map_dbl(data, \(x) (x$open[2]/x$open[1] - 1)),
+    percent = scales::percent(change_rel, accuracy = 0.01)
+  ) |> 
+  ungroup() |> 
+  arrange(change_rel) |> 
+  select(-data)
+```
+
+
+```{r}
+open_prices <- covid_period |> 
+  select(stock_symbol, open, date) |> 
+  mutate(date = as.character(year(date))) |> 
+  pivot_wider(
+    id_cols = stock_symbol, 
+    names_from = date, 
+    names_prefix = 'open', 
+    values_from = 'open'
+  )
+
+
+chart_line_color <- 'grey20'
+chart_segment_color_pos <- 'seagreen'
+chart_segment_color_neg <-  'firebrick4'
+
+plot_stock_evolution <- function(stock_symbol) {
+  single_stock <- stocks |> 
+    filter(
+      date %within% interval(make_date(2020, 1, 2), make_date(2022, 12, 29)),
+      stock_symbol == !!stock_symbol
+    ) 
+  
+  single_covid_period <- covid_period |> 
+    filter(stock_symbol == !!stock_symbol)
+  
+  single_covid_change <- covid_changes |> 
+    filter(stock_symbol == !!stock_symbol) |> 
+    pull(change_abs)
+  
+  segment_color <- if (single_covid_change > 0) chart_segment_color_pos  else chart_segment_color_neg
+  
+  single_stock |> 
+    ggplot(aes(date, open)) +
+    geom_line(col = chart_line_color, linewidth = 4.5) +
+    geom_line(data = single_covid_period, color = segment_color, linewidth = 7) +
+    theme_void()
+}
+
+
+```
+
+
+```{r}
+# Thank you, Tanya.
+base_url = "https://raw.githubusercontent.com/tashapiro/TidyTuesday/master/2023/W6/logos/"
+
+gt_tbl <- covid_changes |> 
+  left_join(open_prices) |> 
+  mutate(
+    logo = glue::glue('{base_url}{stock_symbol}.png')
+  ) |> 
+  select(logo, company, open2020, open2022, change_abs, percent, stock_symbol) |> 
+  mutate(
+    company = if_else(stock_symbol == 'IBM', 'IBM', company),
+    company = str_remove(company, '(,)? Inc\\.'),
+    company = str_remove(company, ' (Corporation|Platforms|Systems)'),
+    company = str_remove(company, '\\.com')
+  ) |> 
+  gt() |>
+  text_transform(
+    locations = cells_body(columns = 'stock_symbol'),
+    fn = function(column) {
+      map(column, plot_stock_evolution) |>
+        ggplot_image(height = px(50), aspect_ratio = 5)
+    }
+  ) |> 
+  gtExtras::gt_img_rows(columns = 'logo', height = 50) |> 
+  cols_width(
+    logo ~ px(60), 
+    company ~ px(85),
+    open2020 ~ px(120),
+    open2022 ~ px(120),
+    change_abs ~ px(75),
+    percent ~ px(75),
+    stock_symbol ~ px(250)
+  ) |> 
+  cols_label(
+    stock_symbol = 'Opening prices over time',
+    company = '',
+    logo = '',
+    open2020 = 'Jan 02, 2020',
+    open2022 = 'Dec 29, 2022',
+    change_abs = 'abs.',
+    percent = 'rel.'
+  ) |> 
+  cols_align(columns = stock_symbol, 'center') |> 
+  tab_spanner(
+    label = 'Opening prices',
+    columns = open2020:open2022
+  ) |> 
+  tab_spanner(
+    label = 'Change',
+    columns = change_abs:percent
+  ) |> 
+  fmt_currency(
+    columns = open2020:change_abs
+  ) |> 
+  tab_header(
+    title = 'Not all tech companies are COVID winners',
+    subtitle = 'During the pandemic, tech companies were hyped as COVID winners. Their stock prices surged while most other companies struggled. But not every tech company was so lucky in the end.'
+  ) |> 
+  tab_style(
+    locations = cells_title('title'),
+    style = cell_text(align = 'left', font = 'Merriweather', size = 'xx-large', weight = 600)
+  ) |> 
+  tab_style(
+    locations = cells_title('subtitle'),
+    style = cell_text(align = 'left', size = 'x-large')
+  ) |> 
+  tab_style(
+    locations = list(
+      cells_column_spanners(), 
+      cells_column_labels(columns = 'stock_symbol'),
+      cells_footnotes(),
+      cells_body(columns = 'company')
+    ),
+    style = cell_text(weight = 600)
+  ) |> 
+  tab_style_body(
+    fn = function(x) (parse_number(as.character(x)) < 0),
+    style = cell_text(color = chart_segment_color_neg, weight = 'bold'),
+    columns = c('change_abs', 'percent')
+  ) |> 
+   tab_style_body(
+    fn = function(x) (parse_number(as.character(x)) >= 0),
+    style = cell_text(color = chart_segment_color_pos, weight = 'bold'),
+    columns = c('change_abs', 'percent')
+  ) |> 
+  tab_footnote(
+    footnote = glue::glue('Data: Yahoo Finance | Table: Albert Rapp, {fontawesome::fa("twitter", fill = "#104e8b")}@rappa753') |> html(),
+    placement = 'right'
+  ) |> 
+  tab_options(
+    table.font.names = 'Source Sans Pro',
+    table.font.size = px(18),
+  ) |> 
+  opt_css(
+    css = '.gt_footnote {
+      text-align: right; 
+      padding-top: 5px;
+      padding-bottom: 5px;
+    }
+    '
+  )
+
+gtsave(gt_tbl, 'tbl.png')
+```
+
+
