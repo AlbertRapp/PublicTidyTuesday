@@ -1,0 +1,194 @@
+
+
+```{r}
+haunted_places <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-10-10/haunted_places.csv')
+setwd(here::here('2023-w41'))
+
+camcorder::gg_record(
+  dir = 'img',
+  width = 16,
+  height = 9,
+  unit = 'cm',
+  dpi = 300
+)
+library(tidyverse)
+```
+
+
+
+Code adapted from [Abdoul Madjid](https://github.com/AbdoulMa/30DayMapChallenge/tree/main/Day4) to get hexagon map with centroids.
+
+```{r}
+dat <- geojsonio::geojson_read(
+  'us_states_hexgrid.geojson', 
+  what = 'sp'
+)
+dat@data <- dat@data |>  
+  mutate(
+    google_name = str_remove(google_name, ' \\(United States\\)')
+  )
+
+dat_fortified <- sf::st_as_sf(dat) |> 
+  as_tibble() |> 
+  select(state = google_name, geometry) 
+
+
+numbers_by_states <- haunted_places |> 
+  count(state, sort = TRUE) |> 
+  mutate(
+    state = if_else(
+      state == 'Washington DC',
+      'District of Columbia',
+      state
+    )
+  )
+
+numbers_and_geos <- dat_fortified |> 
+  left_join(numbers_by_states)
+
+# Calculate the centroid of each hexagon to add the label:
+centers <- data.frame(
+    rgeos::gCentroid(dat, byid=TRUE), 
+    id=dat@data$iso3166_2, 
+    state = dat@data$google_name, 
+    label = dat@data$label
+  ) |> 
+  as_tibble() |> 
+  left_join(numbers_by_states)
+```
+
+
+```{r}
+top_5_states <- numbers_by_states |> 
+  left_join(centers) |> 
+  slice_max(n, n = 5) |> 
+  select(id, n) |> 
+  mutate(text = glue::glue('{id}: {n |> scales::label_number(big.mark = ",")()}')) |> 
+  pull(text) |> 
+  glue::glue_collapse(sep = ' | ')
+```
+
+
+
+```{r}
+ggplot() +
+  ggfx::with_outer_glow( 
+       geom_sf(
+        data = numbers_and_geos, 
+        aes(geometry = geometry, fill = n),
+        col = '#FF9A24'
+      ),
+      colour = '#FF9A24',
+      sigma = 20
+  ) +
+  geom_text(
+    data = centers, 
+    aes(x, y + 0.75, label = id),
+    size = 3,
+    fontface = 'bold',
+    family = 'Ceviche One'
+  ) +
+  geom_text(
+    data = centers, 
+    aes(x, y - 0.75, label = n),
+    size = 2,
+    family = 'Ceviche One'
+  ) +
+  theme_void(base_family = 'Ceviche One') +
+  scale_fill_gradient(
+    high = '#FF9A24', 
+    low = colorspace::lighten('#3B3638', 0.9)
+  ) +
+  guides(
+    fill = guide_colorbar(
+      barheight = unit(0.2, 'cm'),
+      barwidth = unit(10, 'cm'),
+      title.position = 'top',
+      title.vjust = 0
+    )
+  ) +
+  labs(
+    title = 'California is Spooooooky',
+    subtitle = glue::glue(
+      'Among the US states, California has the highest number of haunted places<br>',
+      '<span style = "font-size:10px;">(Top 5 states: ',
+      top_5_states, 
+      '</span>)'
+    ),
+    caption = 'Data: TidyTuesday 2023 - Week 41: Haunted Places | Visualization: Albert Rapp',
+    fill = 'Haunted places'
+  ) +
+  theme(
+    text = element_text(color = 'white'),
+    legend.position = 'top',
+    plot.title = element_text(
+      family = 'Creepster',
+      size = 24,
+      margin = margin(t = 0.25, b = 0.1, unit = 'cm'),
+      color = '#FF9A24'
+    ),
+    plot.subtitle = ggtext::element_markdown(
+      margin = margin(t = 0.2, b = 0.5, unit = 'cm'),
+      size = 12
+    ),
+    plot.caption = ggtext::element_markdown(
+      size = 5.5,
+      margin = margin(b = 0.25, t = 0.1, unit = 'cm')
+    ),
+    plot.background = element_rect(fill = '#242D34', color = NA),
+    legend.text = element_text(size = 7, vjust = 1.5),
+    legend.title = element_text(size = 10),
+  ) 
+```
+
+
+
+
+
+
+
+```{r}
+set.seed(45344)
+ggplot() + 
+  ggfx::as_reference(
+    geom_text(
+      aes(0.5, 0.5, label = 'Spoooooky'), 
+      size = 36, 
+      fontface = 'bold',
+      family = 'Creepster'
+    ), 
+    id = "text"
+  ) +
+  ggfx::with_blend(
+    geom_hex(
+      aes(
+        rnorm(1000, 0.5, 0.3), 
+        rnorm(1000, 0.5, 0.3),
+        col = after_stat(count)
+      ), 
+      show.legend = FALSE
+    ),
+    bg_layer = "text",
+    blend_type = "in",
+    id = "blended"
+  ) + 
+  ggfx::with_shadow(
+    "blended", 
+    x_offset = 20,
+    y_offset = 20,
+    sigma = 10
+  ) + 
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1), clip = 'off') + 
+  labs(x = NULL, y = NULL) +
+  scale_fill_gradient(
+    high = '#FF9A24', 
+    low = colorspace::lighten('#FF9A24', 0.2)
+  ) +
+  scale_color_gradient(
+    high = '#FF9A24', 
+    low = colorspace::lighten('#FF9A24', 0.2)
+  ) +
+  theme_void() +
+  theme(plot.background = element_rect(fill = 'white', color = NA))
+```
+
