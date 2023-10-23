@@ -1,0 +1,223 @@
+
+
+
+```{r}
+#| message: false
+library(tidyverse)
+library(gt)
+
+setwd(here::here('2023-w42-taylor-swift'))
+
+taylor_album_songs <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-10-17/taylor_album_songs.csv')
+taylor_all_songs <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-10-17/taylor_all_songs.csv')
+taylor_albums <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-10-17/taylor_albums.csv')
+
+album_mean_attributes <- taylor_album_songs |> 
+  summarise(
+    across(
+      danceability:tempo,
+      \(x) mean(x, na.rm = TRUE)
+    ), 
+    .by = album_name
+  )  |> 
+  left_join(taylor_albums) |> 
+  arrange(album_release)
+
+```
+
+
+
+
+
+```{r}
+cover_links <- c(
+  "Taylor Swift" = "https://www.billboard.com/wp-content/uploads/2022/10/taylor-swift-self-titled-billboard-1240.jpg?w=768",
+  "Speak Now" = "https://www.billboard.com/wp-content/uploads/2022/06/taylor-swift-speak-now-billboard-1240.jpg?w=768",
+  "1989" = "https://www.billboard.com/wp-content/uploads/2015/06/taylor-swift-1989-album-billboard-1548.jpg?w=768",
+  "reputation" = "https://www.billboard.com/wp-content/uploads/2022/10/taylor-swift-reputation-billboard-1240.jpg?w=1024",
+  "Lover" = "https://www.billboard.com/wp-content/uploads/media/Taylor-Swift-Lover-album-art-2019-billboard-1240.jpg?w=768",
+  "folklore" = "https://www.billboard.com/wp-content/uploads/2020/12/Taylor-swift-folklore-cover-billboard-1240-1607121703.jpg?w=768",
+  "evermore" = "https://www.billboard.com/wp-content/uploads/2020/12/taylor-swift-cover-2020-billboard-1240-1607612466.jpg?w=768",
+  "Fearless (Taylor's Version)" = "https://www.billboard.com/wp-content/uploads/2021/04/Taylor-Swift-fearless-album-art-cr-Beth-Garrabrant-billboard-1240-1617974663.jpg?w=768",
+  "Red (Taylor's Version)" = "https://www.billboard.com/wp-content/uploads/2022/10/taylor-swift-red-taylors-version-billboard-1240.jpg?w=768",
+  "Midnights" = "https://www.billboard.com/wp-content/uploads/2022/10/taylor-swift-midnights-album-cover-2022-billboard-1240.jpg?w=768"
+)
+
+metrics <-  c('danceability', 'energy', 'acousticness')
+metric_colors <- c('#aa1845', '#26233b', '#7f6557')
+names(metric_colors) <- metrics
+  
+metric_chart <- function(album, metric) {
+  
+  metric_range <- taylor_album_songs |> 
+    pull({{ metric }}) |> 
+    range(na.rm = TRUE)
+  
+  selected_metric_vals <- taylor_album_songs |> 
+    filter(album_name == !!album) |> 
+    pull({{ metric }})
+  
+  
+  ggplot() +
+    geom_point(
+      aes(y = album, x = selected_metric_vals),
+      size = 50, 
+      alpha = 0.2,
+      na.rm = TRUE,
+      shape = '|',
+      col = metric_colors[metric]
+    ) +
+    geom_point(
+      aes(y = album, x = mean(selected_metric_vals, na.rm = TRUE)),
+      size = 75, 
+      shape = '|',
+      col = metric_colors[metric]
+    ) +
+    coord_cartesian(xlim = metric_range) +
+    theme_void()
+}
+```
+
+
+```{r}
+tbl_dat <- album_mean_attributes |> 
+  mutate(
+    image = cover_links[album_name],
+    dist1 = paste0(
+      album_name, 
+      ',',
+      metrics[1]
+    ),
+    dist2 = paste0(
+      album_name, 
+      ',',
+      metrics[2]
+    ),
+    dist3 = paste0(
+      album_name, 
+      ',',
+      metrics[3]
+    ),
+    empty_col1 = '',
+    empty_col2 = '',
+    empty_col3 = '',
+  )  |> 
+  select(
+    image, album_name, album_release,
+    empty_col1,
+    metrics[1],
+    dist1,
+    empty_col2,
+    metrics[2],
+    dist2,
+    empty_col3,
+    metrics[3],
+    dist3
+  )
+
+actual_colnames <- colnames(tbl_dat)
+desired_colnames <- c(
+  '',
+  'Album',
+  'Release',
+  rep(c('', 'Mean', 'Distribution'), 3)
+)
+names(desired_colnames) <- actual_colnames
+
+custom_css <- glue::glue(
+  '
+  #my_tbl th[id="<strong><<metrics>></strong>"] > span {border-bottom-color: <<metric_colors>>;}
+  ',
+  .open = '<<',
+  .close = '>>'
+)
+
+taylor_tbl <- tbl_dat |> 
+  gt(id = 'my_tbl') |> 
+  cols_label(.list = desired_colnames) |>
+  cols_width(
+    matches('empty') ~ px(30)
+  ) |> 
+  cols_align(align = 'center', columns = contains('dist')) |> 
+  tab_spanner(
+    label = md(glue::glue('**{metrics[1]}**')),
+    columns = 5:6,
+    id = 'metric1'
+  ) |> 
+  tab_spanner(
+    label = md(glue::glue('**{metrics[2]}**')),
+    columns = 8:9,
+    id = 'metric2'
+  ) |> 
+  tab_spanner(
+    label =  md(glue::glue('**{metrics[3]}**')),
+    columns = 11:12,
+    id = 'metric3'
+  ) |> 
+  tab_header(
+    title = md('**Taylor Swift\'s Album Metrics According to Spotify**'),
+    subtitle = 'Charts show distribution of metrics for all songs of a given album. Mean is highlighted.'
+  ) |> 
+  tab_footnote(
+    footnote = 
+      md('TidyTuesday 2023 - Week 42: Taylor Swift | **Data:** {taylor} R package | **Images:** Billboard.com | **Table:** Albert Rapp')
+  ) |> 
+  tab_footnote(
+    footnote = md("Re-recording. Original album was released November 11, 2008."),
+    locations = cells_body(columns = album_release, row = 8),
+    placement = 'right'
+  ) |> 
+  tab_footnote(
+    footnote = md("Re-recording. Original album was released October 22, 2012."),
+    locations = cells_body(columns = album_release, row = 9),
+    placement = 'right'
+  ) |> 
+  gtExtras::gt_theme_538() |> 
+  gtExtras::gt_img_rows(image, height = 60) |> 
+  fmt_number() |> 
+  fmt_date(
+    columns = album_release,
+    date_style = 'm_day_year'
+  ) |> 
+  text_transform(
+    locations = cells_body(columns = contains('dist')),
+    fn = function(column) {
+      str_split(column, ',') |> 
+      map(\(x) metric_chart(x[1], x[2])) |> 
+        ggplot_image(height = 60, aspect_ratio = 2)
+    }
+  ) |> 
+  tab_style(
+    locations = cells_column_spanners('metric1'),
+    style = list(
+      cell_text(color = metric_colors[1])
+    )
+  ) |> 
+  tab_style(
+    locations = cells_column_spanners('metric3'),
+    style = list(
+      cell_text(color = metric_colors[2])
+    )
+  ) |> 
+  tab_style(
+    locations = cells_column_spanners('metric3'),
+    style = list(
+      cell_text(color = metric_colors[3])
+    )
+  ) |> 
+  opt_css(custom_css) |> 
+  opt_css(
+  ' .gt_footnotes tr:not(:first-child) {
+        text-align: right;
+    }
+  ') |> 
+  opt_footnote_marks(marks = "letters") 
+
+taylor_tbl
+
+gtsave(taylor_tbl, 'final_table.png', vwidth = 1500, expand = 50)
+```
+
+![](final_table.png)
+
+
